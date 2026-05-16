@@ -1,0 +1,112 @@
+.joblens-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  align-items: center;
+}
+
+.joblens-chip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.joblens-chip--unknown {
+  background: #f0f0f0;
+  color: #888888;
+  border-color: #d0d0d0;
+}
+
+.joblens-chip--software {
+  background: #e6f4ea;
+  color: #1e7f34;
+  border-color: #b7e1c0;
+}
+
+.joblens-chip--not-software {
+  background: #fdecea;
+  color: #b42318;
+  border-color: #f7c2bd;
+}
+
+.joblens-chip--unclear {
+  background: #fff7e6;
+  color: #b35c00;
+  border-color: #ffd699;
+}
+
+.joblens-chip--applicants-low {
+  background: #e6f4ea;
+  color: #1e7f34;
+  border-color: #b7e1c0;
+}
+
+.joblens-chip--applicants-medium {
+  background: #fef9e6;
+  color: #8a6800;
+  border-color: #f5d87e;
+}
+
+.joblens-chip--applicants-high {
+  background: #fff0ee;
+  color: #c0422d;
+  border-color: #f5b8b0;
+}
+
+.joblens-chip--applicants-very-high {
+  background: #fdecea;
+  color: #b42318;
+  border-color: #f7c2bd;
+}
+
+.joblens-chip--applicants-extreme {
+  background: #fce4e1;
+  color: #7a1208;
+  border-color: #e89088;
+}
+
+.joblens-chip--experience {
+  background: #f3f0ff;
+  color: #5b21b6;
+  border-color: #c4b5fd;
+}
+
+.joblens-chip--sponsorship-yes {
+  background: #e0f7f4;
+  color: #00695c;
+  border-color: #80cbc4;
+}
+
+.joblens-chip--sponsorship-no {
+  background: #fdecea;
+  color: #b42318;
+  border-color: #f7c2bd;
+}
+
+.h1b-sponsor-highlight {
+  background-color: #7f1d1d;
+  color: #fecaca !important;
+  border-radius: 2px;
+  padding: 0 2px;
+}
+
+.h1b-sponsor-highlight-positive {
+  background-color: #14532d;
+  color: #bbf7d0 !important;
+  border-radius: 2px;
+  padding: 0 2px;
+}
+
+.h1b-experience-highlight {
+  background-color: #3b0764;
+  color: #e9d5ff !important;
+  border-radius: 2px;
+  padding: 0 2px;
+}

@@ -1,0 +1,11 @@
+# Job description datasets — too large / personal, not needed by users
+tailored_job_descriptions.json
+test-jds-software.json
+test-jds-not-software.json
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
