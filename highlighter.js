@@ -128,5 +128,17 @@ const Highlighter = (function () {
     setTimeout(() => highlightSentences([rawMatch], 'h1b-experience-highlight'), 300);
   }
 
-  return { highlight, highlightExperience, removeHighlights };
+  function highlightCompensation(rawMatch) {
+    if (!rawMatch) return;
+    setTimeout(() => highlightSentences([rawMatch], 'joblens-compensation-highlight'), 300);
+  }
+
+  function highlightLanguages(languages) {
+    if (!languages || languages.length === 0) return;
+    const keywords = languages.flatMap(lang => lang.matchedKeywords || []);
+    if (keywords.length === 0) return;
+    setTimeout(() => highlightSentences(keywords, 'joblens-language-highlight'), 300);
+  }
+
+  return { highlight, highlightExperience, highlightCompensation, highlightLanguages, removeHighlights };
 })();

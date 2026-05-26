@@ -110,3 +110,29 @@
   border-radius: 2px;
   padding: 0 2px;
 }
+
+.joblens-chip--compensation {
+  background: #e0f2fe;
+  color: #0369a1;
+  border-color: #7dd3fc;
+}
+
+.joblens-compensation-highlight {
+  background-color: #1e3a5f;
+  color: #bfdbfe !important;
+  border-radius: 2px;
+  padding: 0 2px;
+}
+
+.joblens-chip--language {
+  background: #f1f5f9;
+  color: #334155;
+  border-color: #94a3b8;
+}
+
+.joblens-language-highlight {
+  background-color: #78350f;
+  color: #fde68a !important;
+  border-radius: 2px;
+  padding: 0 2px;
+}

@@ -486,13 +486,63 @@
     };
   };
 
-  const EXPERIENCE_PATTERNS = [
+  // Tier 1: patterns that explicitly contain "experience" — high confidence
+  const EXPERIENCE_PATTERNS_T1 = [
+    // Range with experience word: "4-6 years of X experience", "2 to 5+ years of X experience"
+    {
+      re: /(\d+)(?:\s*[-–]\s*|\s+to\s+)(\d+)\+?\s+years?'?\s+(?:of\s+)?(?:[\w-]+\s+){0,5}experience/gi,
+      parse: (m) => {
+        const lo = parseInt(m[1], 10), hi = parseInt(m[2], 10);
+        const plus = /\d+\+/.test(m[0]);
+        return { min: lo, display: `${lo}–${hi}${plus ? '+' : ''} yrs` };
+      }
+    },
+    // Written words + optional parens: "four (4) years of SWE experience"
+    {
+      re: /\b(one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:\(\d+\)\s+)?years?'?\s+of(?:\s+[\w-]+){0,5}\s+experience/gi,
+      parse: (m) => {
+        const n = { one:1, two:2, three:3, four:4, five:5, six:6, seven:7, eight:8, nine:9, ten:10 }[m[1].toLowerCase()];
+        return { min: n || 0, display: n === 1 ? "1 yr" : `${n} yrs` };
+      }
+    },
+    // "(4) years of X experience"
+    {
+      re: /\((\d+)\)\s+years?'?\s+of(?:\s+[\w-]+){0,5}\s+experience/gi,
+      parse: (m) => { const n = parseInt(m[1], 10); return { min: n, display: `${n} yrs` }; }
+    },
+    // "3 years of experience", "3+ years of experience" — lookbehind prevents matching upper bound of range
+    {
+      re: /(?<![-–])(\d+)\+?\s+years?'?\s+of(?:\s+[\w-]+){0,5}\s+experience/gi,
+      parse: (m) => {
+        const n = parseInt(m[1], 10);
+        const plus = /^\d+\+/.test(m[0]);
+        return { min: n, display: n === 1 && !plus ? "1 yr" : `${n}${plus ? '+' : ''} yrs` };
+      }
+    },
+    // "3 years applicable experience", "3+ years X experience"
+    {
+      re: /(?<![-–])(\d+)\+?\s+years?'?\s+(?:[\w-]+\s+){0,4}experience/gi,
+      parse: (m) => {
+        const n = parseInt(m[1], 10);
+        const plus = /^\d+\+/.test(m[0]);
+        return { min: n, display: n === 1 && !plus ? "1 yr" : `${n}${plus ? '+' : ''} yrs` };
+      }
+    },
+    // "5-year experience", "5-year software engineering experience"
+    {
+      re: /(\d+)-year\s+(?:[\w-]+\s+){0,4}experience/gi,
+      parse: (m) => { const n = parseInt(m[1], 10); return { min: n, display: `${n} yrs` }; }
+    }
+  ];
+
+  // Tier 2: bare year mentions — only used when no tier-1 match found
+  const EXPERIENCE_PATTERNS_T2 = [
     // "8-12+ years"
     {
       re: /(\d+)\s*[-–]\s*(\d+)\+\s*years?/gi,
       parse: (m) => ({ min: parseInt(m[1], 10), display: `${m[1]}–${m[2]}+ yrs` })
     },
-    // "3-5 years", "3–5 years"
+    // "3-5 years"
     {
       re: /(\d+)\s*[-–]\s*(\d+)\s*years?/gi,
       parse: (m) => ({ min: parseInt(m[1], 10), display: `${m[1]}–${m[2]} yrs` })
@@ -522,63 +572,48 @@
       re: /(?:more\s+than|over|upwards?\s+of)\s+(\d+)\s*years?/gi,
       parse: (m) => ({ min: parseInt(m[1], 10), display: `${m[1]}+ yrs` })
     },
-    // "minimum 5 years", "at least 5 years", "at minimum 5 years",
-    // "a minimum of 5 years", "no less than 5 years"
+    // "minimum 5 years", "at least 5 years", "no less than 5 years"
     {
       re: /(?:minimum|at\s+(?:least|minimum)|a\s+minimum\s+of|no\s+less\s+than)\s+(\d+)\s*years?/gi,
       parse: (m) => ({ min: parseInt(m[1], 10), display: `${m[1]}+ yrs` })
-    },
-    // Written words + optional parens: "four (4) years of SWE experience",
-    // "five years of experience", "one year of relevant experience"
-    {
-      re: /\b(one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:\(\d+\)\s+)?years?'?\s+of(?:\s+[\w-]+){0,5}\s+experience/gi,
-      parse: (m) => {
-        const n = { one:1, two:2, three:3, four:4, five:5, six:6, seven:7, eight:8, nine:9, ten:10 }[m[1].toLowerCase()];
-        return { min: n || 0, display: n === 1 ? "1 yr" : `${n} yrs` };
-      }
-    },
-    // "(4) years of X experience" — parenthetical digit alone
-    {
-      re: /\((\d+)\)\s+years?'?\s+of(?:\s+[\w-]+){0,5}\s+experience/gi,
-      parse: (m) => { const n = parseInt(m[1], 10); return { min: n, display: `${n} yrs` }; }
-    },
-    // "1 year of software engineering experience", "3 years of experience"
-    {
-      re: /(\d+)\s+years?'?\s+of(?:\s+[\w-]+){0,5}\s+experience/gi,
-      parse: (m) => { const n = parseInt(m[1], 10); return { min: n, display: n === 1 ? "1 yr" : `${n} yrs` }; }
-    },
-    // "3 years experience", "5 years' experience", "3 years hands-on development experience"
-    {
-      re: /(\d+)\s+years?'?\s+(?:[\w-]+\s+){0,3}experience/gi,
-      parse: (m) => { const n = parseInt(m[1], 10); return { min: n, display: n === 1 ? "1 yr" : `${n} yrs` }; }
-    },
-    // "5-year experience", "5-year software engineering experience"
-    {
-      re: /(\d+)-year\s+(?:[\w-]+\s+){0,3}experience/gi,
-      parse: (m) => { const n = parseInt(m[1], 10); return { min: n, display: `${n} yrs` }; }
     }
   ];
 
-  const extractExperienceRequirement = (text) => {
-    const normalized = normalizeText(text);
-    const collected = [];
+  const getMatchContext = (normalized, start) => {
+    const win = normalized.substring(Math.max(0, start - 600), start).toLowerCase();
+    const reqIdx = win.lastIndexOf('required');
+    const prefIdx = Math.max(win.lastIndexOf('preferred'), win.lastIndexOf('nice to have'), win.lastIndexOf('nice-to-have'));
+    if (reqIdx === -1 && prefIdx === -1) return 'neutral';
+    return reqIdx >= prefIdx ? 'required' : 'preferred';
+  };
 
-    for (const { re, parse } of EXPERIENCE_PATTERNS) {
+  const collectExperienceMatches = (normalized, patterns) => {
+    const collected = [];
+    for (const { re, parse } of patterns) {
       re.lastIndex = 0;
       let m;
       while ((m = re.exec(normalized)) !== null) {
         const start = m.index;
         const end = m.index + m[0].length;
-        const overlaps = collected.some((c) => start < c.end && end > c.start);
-        if (!overlaps) {
+        if (!collected.some((c) => start < c.end && end > c.start)) {
           const { min, display } = parse(m);
           collected.push({ min, display, rawMatch: m[0], start, end });
         }
       }
     }
+    return collected.filter(c => c.min >= 0 && c.min <= 15);
+  };
 
-    if (!collected.length) return null;
-    const best = collected.reduce((b, c) => (c.min > b.min ? c : b));
+  const extractExperienceRequirement = (text) => {
+    const normalized = normalizeText(text);
+    const t1 = collectExperienceMatches(normalized, EXPERIENCE_PATTERNS_T1);
+    const pool = t1.length ? t1 : collectExperienceMatches(normalized, EXPERIENCE_PATTERNS_T2);
+    if (!pool.length) return null;
+    // Prefer required-context matches; fall back to all if none are explicitly required
+    const tagged = pool.map(m => ({ ...m, ctx: getMatchContext(normalized, m.start) }));
+    const requiredPool = tagged.filter(m => m.ctx === 'required');
+    const activePool = requiredPool.length > 0 ? requiredPool : tagged;
+    const best = activePool.reduce((b, c) => (c.min > b.min ? c : b));
     return { display: best.display, rawMatch: best.rawMatch };
   };
 
@@ -645,10 +680,10 @@
     /\bunable\s+to\s+sponsor\b/i,
     /\bunable\s+to\s+sponsor.*work\s+visas?\b/i,
     /\bdoes\s+not\s+provide\s+(visa\s+)?sponsorship\b/i,
-    /\bwill\s+not\s+provide\s+(visa\s+)?sponsorship\b/i,
-    /\bnot\s+provide\s+(visa\s+)?sponsorship\b/i,
-    /\bunable\s+to\s+provide\s+(visa\s+)?sponsorship\b/i,
-    /\bwithout\s+(?:the\s+need\s+for\s+)?(?:current\s+or\s+)?future\s+(?:visa\s+)?sponsorship\b/i,
+    /\bwill\s+not\s+(?:be\s+)?provid(?:e|ing)\s+(visa\s+)?sponsorship\b/i,
+    /\bnot\s+provid(?:e|ing)\s+(visa\s+)?sponsorship\b/i,
+    /\bunable\s+to\s+provid(?:e|ing)\s+(visa\s+)?sponsorship\b/i,
+    /\bwithout\s+(?:(?:a|the)\s+need\s+for\s+|requiring\s+)?(?:current\s+or\s+)?future\s+(?:visa\s+)?sponsorship\b/i,
     /\bnot\s+sponsoring\b/i,
     /\bsponsorship\s+not\s+available\b/i,
     /\bno\s+visa\s+sponsorship\b/i,
@@ -663,8 +698,7 @@
     /\bactive\s+security\s+clearance\s+required\b/i,
     /\bactive\s+Top\s+Secret\s+security\s+clearance\b/i,
     /\bactive\s+Top\s+Secret\s+clearance\b/i,
-    /\bactive\s+Secret\s+security\s+clearance\b/i,
-    /\bactive\s+Secret\s+clearance\b/i,
+    /\bactive\s+Secret\s+(?:U\.?S\.?\s+)?(?:security\s+)?clearance\b/i,
     /\bTop\s+Secret\s+security\s+clearance\s+required\b/i,
     /\bTop\s+Secret\s+clearance\s+required\b/i,
     /\bSecret\s+security\s+clearance\s+required\b/i,
@@ -677,7 +711,7 @@
     /\bmust\s+obtain\s+security\s+clearance\b/i,
     /\bmust\s+have\s+active\s+security\s+clearance\b/i,
     /\bmust\s+possess\s+active\s+security\s+clearance\b/i,
-    /\bable\s+to\s+obtain\s+security\s+clearance\b/i,
+    /\bable\s+to\s+(?:obtain|maintain|obtain\/maintain)\s+(?:an?\s+)?(?:active\s+)?(?:Secret\s+|Top\s+Secret\s+)?(?:U\.?S\.?\s+)?(?:security\s+)?clearance\b/i,
     /\bclearance\s+eligible\b/i,
     /\bsecurity\s+clearance\s+eligible\b/i,
     /\bsecurity\s+clearances?\s+may\s+only\s+be\s+granted\s+to\s+U\.?S\.?\s+citizens?\b/i,
@@ -688,6 +722,10 @@
     /\bITAR\s+compliance\b/i,
     /\bITAR\s+eligible\b/i,
     /\bmust\s+be\s+ITAR\s+eligible\b/i,
+    /\bU\.?S\.?\s+Persons?\s+as\s+defined\s+by\s+ITAR\b/i,
+    /\brestricted\s+to\s+U\.?S\.?\s+Persons?\b/i,
+    /\bemployment\s+is\s+restricted\s+to\s+U\.?S\.?\s+Persons?\b/i,
+    /\b22\s+CFR\s+[§s]?\s*120\b/i,
     /\bU\.?S\.?\s+citizen\s+or\s+national\b/i,
     /\bU\.?S\.?\s+lawful\s+permanent\s+resident\b/i,
     /\bgreen\s+card\s+holder\b/i,
@@ -695,6 +733,12 @@
     /\bDepartment\s+of\s+State\s+authorization\b/i,
     /\bcandidates\s+(working\s+)?under\s+OPT\b/i,
     /\bworking\s+under\s+OPT\b/i,
+    /\bU\.?S\.?\s+citizenship\b/i,
+    /\bUnited\s+States\s+citizenship\b/i,
+    /\bU\.?S\.?\s+citizens?[^.]{0,40}only\b/i,
+    /\bGC\s+holders?\b/i,
+    /\bgreen\s+card\s+holders?\s+only\b/i,
+    /\bcitizens?\s+or\s+(?:GC|green\s+card)\s+holders?\b/i,
     /\bdo\s+not\s+offer\s+(?:any\s+)?(?:visa\s+)?sponsorship\b/i,
     /\bdoes\s+not\s+offer\s+(?:any\s+)?(?:visa\s+)?sponsorship\b/i,
     /\bnot\s+consider\s+candidates\s+who\s+need\s+sponsorship\b/i,
@@ -730,7 +774,8 @@
     /\bcannot\s+/i,
     /\bcan't\s+/i,
     /\bwill\s+not\s+/i,
-    /\bwon't\s+/i
+    /\bwon't\s+/i,
+    /\bwithout\s+/i
   ];
 
   const isSponsorshipNegated = (text, matchIndex) => {
@@ -795,10 +840,221 @@
     return { status, confidence, matchedKeywords: allKeywords, details: matched };
   };
 
+  const extractCompensation = (text) => {
+    const normalized = normalizeText(text);
+
+    const parseAmt = (digits, kSuffix) => parseFloat(digits.replace(/,/g, '')) * (kSuffix ? 1000 : 1);
+    const fmtAmt = (n) => n >= 1000 ? `$${Math.round(n / 1000)}K` : `$${n % 1 === 0 ? n : n.toFixed(2)}`;
+
+    // Range: $X - $Y, $Xk - $Yk, USD X – Y, $X to $Y, MIN $X - MAX $Y
+    const rangeRe = /(?:\$|USD\s*\$?|US\$)\s*(\d[\d,]*(?:\.\d+)?)(k?)(?:\s*[-–—]\s*|\s+to\s+)(?:max\s+)?(?:\$|USD\s*\$?|US\$)?\s*(\d[\d,]*(?:\.\d+)?)(k?)(?:\s*(?:\/\s*(?:hr|hour|yr|year)\b|per\s+(?:hour|year)\b|usd\b|annually\b|per\s+annum\b))?/gi;
+    let m;
+    rangeRe.lastIndex = 0;
+    while ((m = rangeRe.exec(normalized)) !== null) {
+      let n1 = parseAmt(m[1], m[2]);
+      let n2 = parseAmt(m[3], m[4]);
+      // Propagate K when one side uses abbreviation and the other omits it
+      if (n1 >= 1000 && n2 > 0 && n2 < 500 && !m[4]) n2 *= 1000;
+      if (n2 >= 1000 && n1 > 0 && n1 < 500 && !m[2]) n1 *= 1000;
+      if (n2 <= n1 || n1 <= 0) continue;
+      const isHourly = /\/\s*(?:hr|hour)\b/i.test(m[0]) || (n1 < 500 && n2 < 500);
+      const suffix = isHourly ? '/hr' : '';
+      return { display: `${fmtAmt(n1)}–${fmtAmt(n2)}${suffix}`, rawMatch: m[0].trim() };
+    }
+
+    // Single with explicit hourly/annual suffix: "$45/hr", "$120k annually", "USD 120,000/year"
+    const singleRe = /(?:(?:up\s+to|starting\s+at|base(?:\s+salary)?\s+of)\s+)?(?:\$|USD\s*\$?|US\$)\s*(\d[\d,]*(?:\.\d+)?)(k?)(?:\s*(?:\/\s*(?:hr|hour|yr|year)\b|per\s+(?:hour|year)\b|annually\b|per\s+annum\b))/gi;
+    singleRe.lastIndex = 0;
+    while ((m = singleRe.exec(normalized)) !== null) {
+      const n = parseAmt(m[1], m[2]);
+      if (n <= 0) continue;
+      const isHourly = /\/\s*(?:hr|hour)\b/i.test(m[0]) || (n < 500 && !/(?:yr|year|annual)/i.test(m[0]));
+      const prefix = /up\s+to/.test(m[0]) ? '≤' : '';
+      const suffix = isHourly ? '/hr' : '';
+      return { display: `${prefix}${fmtAmt(n)}${suffix}`, rawMatch: m[0].trim() };
+    }
+
+    return null;
+  };
+
+  // ---- Language / Framework Detector ----
+
+  // priority: 1=Python, 2=frontend frameworks, 3=TS/Node, 4=other backends
+  const LANGUAGE_DEFINITIONS = [
+    // ── Frontend frameworks (priority 2; suppress TS/JS/Node chips) ──
+    {
+      name: "React", priority: 2, frontend: true,
+      keywords: [
+        { w: "react", weight: 1 }, { w: "react.js", weight: 1 }, { w: "reactjs", weight: 1 },
+        { w: "react native", weight: 1 }, { w: "react hooks", weight: 1 },
+        { w: "jsx", weight: 0.5 }, { w: "next.js", weight: 1 }, { w: "nextjs", weight: 1 }
+      ]
+    },
+    {
+      name: "Vue", priority: 2, frontend: true,
+      keywords: [
+        { w: "vue", weight: 1 }, { w: "vue.js", weight: 1 },
+        { w: "vuex", weight: 1 }, { w: "nuxt", weight: 1 }, { w: "nuxt.js", weight: 1 }
+      ]
+    },
+    {
+      name: "Angular", priority: 2, frontend: true,
+      keywords: [
+        { w: "angular", weight: 1 }, { w: "angularjs", weight: 1 },
+        { w: "rxjs", weight: 1 }, { w: "ngrx", weight: 1 }
+      ]
+    },
+    {
+      name: "Svelte", priority: 2, frontend: true,
+      keywords: [
+        { w: "svelte", weight: 1 }, { w: "sveltekit", weight: 1 }
+      ]
+    },
+    // ── Python (priority 1 — user's primary target) ──
+    {
+      name: "Python", priority: 1,
+      keywords: [
+        { w: "python", weight: 1 }, { w: "django", weight: 1 }, { w: "flask", weight: 1 },
+        { w: "fastapi", weight: 1 }, { w: "numpy", weight: 1 }, { w: "pandas", weight: 1 },
+        { w: "pytorch", weight: 1 }, { w: "tensorflow", weight: 1 },
+        { w: "scikit-learn", weight: 1 }, { w: "sklearn", weight: 1 },
+        { w: "pytest", weight: 1 }, { w: "pydantic", weight: 1 }, { w: "sqlalchemy", weight: 1 },
+        { w: "celery", weight: 1 }, { w: "asyncio", weight: 1 }, { w: "pyspark", weight: 1 },
+        { w: "langchain", weight: 1 }, { w: "langgraph", weight: 1 }, { w: "llamaindex", weight: 1 }
+      ]
+    },
+    // ── Other backend languages (priority 4) ──
+    {
+      name: "Java", priority: 4,
+      keywords: [
+        { w: "\\bjava\\b", weight: 1, isRegex: true, hl: "java" },
+        { w: "spring boot", weight: 1 }, { w: "spring framework", weight: 1 },
+        { w: "hibernate", weight: 1 }, { w: "maven", weight: 1 },
+        { w: "gradle", weight: 1 }, { w: "junit", weight: 1 }, { w: "jvm", weight: 1 }
+      ]
+    },
+    {
+      name: "Go", priority: 4, threshold: 3,
+      keywords: [
+        { w: "golang", weight: 1 }, { w: "go lang", weight: 1 },
+        { w: "\\bgo\\b", weight: 0.5, isRegex: true, hl: null }
+      ]
+    },
+    {
+      name: "C#", priority: 4,
+      keywords: [
+        { w: "c#", weight: 1 }, { w: "\\.net\\b", weight: 1, isRegex: true, hl: ".net" },
+        { w: "asp.net", weight: 1 }, { w: "dotnet", weight: 1 },
+        { w: "entity framework", weight: 1 }, { w: "blazor", weight: 1 }
+      ]
+    },
+    {
+      name: "Ruby", priority: 4,
+      keywords: [
+        { w: "ruby", weight: 1 }, { w: "rails", weight: 1 },
+        { w: "ruby on rails", weight: 1 }, { w: "sinatra", weight: 1 }
+      ]
+    },
+    {
+      name: "Scala", priority: 4,
+      keywords: [{ w: "scala", weight: 1 }, { w: "akka", weight: 1 }]
+    },
+    {
+      name: "Kotlin", priority: 4,
+      keywords: [{ w: "kotlin", weight: 1 }]
+    },
+    {
+      name: "Swift", priority: 4,
+      keywords: [{ w: "swift", weight: 1 }, { w: "swiftui", weight: 1 }]
+    },
+    {
+      name: "Rust", priority: 4,
+      keywords: [{ w: "rust", weight: 1 }]
+    },
+    {
+      name: "C++", priority: 4,
+      keywords: [{ w: "c\\+\\+", weight: 1, isRegex: true, hl: "c++" }, { w: "cpp", weight: 1 }]
+    },
+    {
+      name: "PHP", priority: 4,
+      keywords: [{ w: "php", weight: 1 }, { w: "laravel", weight: 1 }, { w: "symfony", weight: 1 }]
+    },
+    // ── Fallback JS/TS (priority 3; suppressed when any frontend framework detected) ──
+    {
+      name: "TypeScript", priority: 3, suppressedByFrontend: true,
+      keywords: [
+        { w: "typescript", weight: 1 }, { w: "tsx", weight: 0.5 }, { w: "nestjs", weight: 1 }
+      ]
+    },
+    {
+      name: "Node.js", priority: 3, suppressedByFrontend: true,
+      keywords: [
+        { w: "node\\.js", weight: 1, isRegex: true, hl: "node.js" }, { w: "nodejs", weight: 1 },
+        { w: "express", weight: 0.5 }, { w: "expressjs", weight: 1 }
+      ]
+    },
+    {
+      name: "JavaScript", priority: 3, suppressedByFrontend: true, suppressedByTS: true,
+      keywords: [{ w: "javascript", weight: 1 }]
+    }
+  ];
+
+  const extractLanguages = (text, title = "") => {
+    const normalizedJD = normalizeText(text);
+    const normalizedTitle = normalizeText(title);
+    const sections = splitIntoSections(normalizedJD);
+    const allSections = [{ type: "title", text: normalizedTitle }, ...sections];
+
+    const scored = LANGUAGE_DEFINITIONS.map((lang) => {
+      let score = 0;
+      const matchedSet = new Set();
+      for (const section of allSections) {
+        const sw = SECTION_WEIGHTS[section.type] ?? SECTION_WEIGHTS.other;
+        for (const kw of lang.keywords) {
+          const { w, weight, isRegex, hl } = kw;
+          const pattern = isRegex ? new RegExp(w, "gi") : new RegExp(escapeRegex(w), "gi");
+          const matches = section.text.match(pattern);
+          if (matches) {
+            score += matches.length * weight * sw;
+            // hl: explicit highlight text; undefined = use w; null = skip
+            if (hl !== null) matchedSet.add(hl !== undefined ? hl : w);
+          }
+        }
+      }
+      return {
+        name: lang.name,
+        score,
+        priority: lang.priority ?? 4,
+        frontend: !!lang.frontend,
+        suppressedByFrontend: !!lang.suppressedByFrontend,
+        suppressedByTS: !!lang.suppressedByTS,
+        threshold: lang.threshold ?? 2,
+        matchedKeywords: [...matchedSet]
+      };
+    });
+
+    const passing = scored.filter(e => e.score >= e.threshold);
+    const frontendWins = passing.some(e => e.frontend);
+    const tsWins = passing.some(e => e.name === "TypeScript");
+
+    const filtered = passing.filter(e => {
+      if (frontendWins && e.suppressedByFrontend) return false;
+      if (tsWins && e.suppressedByTS) return false;
+      return true;
+    });
+
+    // Sort by user-priority ASC first, score DESC second — Python/React always surface over Java
+    filtered.sort((a, b) => a.priority !== b.priority ? a.priority - b.priority : b.score - a.score);
+
+    return filtered.slice(0, 2).map(({ name, score, matchedKeywords }) => ({ name, score, matchedKeywords }));
+  };
+
   const root = typeof window !== "undefined" ? window : globalThis;
   root.JobLensClassifier = {
     classifyJobText,
     extractExperienceRequirement,
-    analyzeSponsorship
+    extractCompensation,
+    analyzeSponsorship,
+    extractLanguages
   };
 })();

@@ -1,8 +1,9 @@
 (function () {
   const CHIP_ROW_ID = "joblens-chip-row";
-  const CHIP_ID = "joblens-chip";
+  const CHIP_ID = "joblens-chip"; // kept for future re-enable
   const APPLICANT_CHIP_ID = "joblens-applicant-chip";
   const EXPERIENCE_CHIP_ID = "joblens-experience-chip";
+  const COMPENSATION_CHIP_ID = "joblens-compensation-chip";
   const SPONSORSHIP_CHIP_ID = "joblens-sponsorship-chip";
 
   const waitForElement = (selectors, timeoutMs = 10000) => {
@@ -141,19 +142,31 @@
     return makeChip(CHIP_ID, className, text, buildTooltip(classification));
   };
 
-  // 3. Experience chip
+  // 3. Compensation chip
+  const buildCompensationChip = (compResult) => {
+    if (compResult) return makeChip(COMPENSATION_CHIP_ID, "joblens-chip--compensation", compResult.display);
+    return makeChip(COMPENSATION_CHIP_ID, "joblens-chip--unknown", "? pay");
+  };
+
+  // 4. Experience chip
   const buildExperienceChip = (expResult) => {
     if (expResult) return makeChip(EXPERIENCE_CHIP_ID, "joblens-chip--experience", expResult.display);
     return makeChip(EXPERIENCE_CHIP_ID, "joblens-chip--unknown", "Exp: ?");
   };
 
-  // 4. Applicants chip
+  // 5. Applicants chip
   const buildApplicantsChip = (count) => {
     if (count) return makeChip(APPLICANT_CHIP_ID, getApplicantChipClass(count), `${count} applicants`);
     return makeChip(APPLICANT_CHIP_ID, "joblens-chip--unknown", "? applicants");
   };
 
-  const renderChipRow = (titleEl, sponsorshipResult, classification, expStr, applicantCount) => {
+  // 6. Language chips (0–2 elements)
+  const buildLanguageChips = (languages) =>
+    languages.map((lang, i) =>
+      makeChip(`joblens-lang-chip-${i}`, "joblens-chip--language", lang.name)
+    );
+
+  const renderChipRow = (titleEl, sponsorshipResult, compResult, expResult, applicantCount, classification, languages) => {
     const existing = document.getElementById(CHIP_ROW_ID);
     if (existing) existing.remove();
 
@@ -161,17 +174,19 @@
     row.id = CHIP_ROW_ID;
     row.className = "joblens-chip-row";
 
+    // Order: Sponsorship → Applicants → Compensation → Experience → Language(s) → Software
     row.appendChild(buildSponsorshipChip(sponsorshipResult));
-    row.appendChild(buildSoftwareChip(classification));
-    row.appendChild(buildExperienceChip(expStr));
     row.appendChild(buildApplicantsChip(applicantCount));
+    row.appendChild(buildCompensationChip(compResult));
+    row.appendChild(buildExperienceChip(expResult));
+    buildLanguageChips(languages).forEach(chip => row.appendChild(chip));
+    row.appendChild(buildSoftwareChip(classification));
 
-    // Append inside titleEl — chips appear below the title text as a block child,
-    // without touching the parent flex layout at all.
     titleEl.appendChild(row);
   };
 
   let lastJobKey = null;
+  let lastApplicantCount = null;
 
   const getCurrentJobKey = () => {
     const m = window.location.href.match(/currentJobId=(\d+)/) ||
@@ -181,7 +196,12 @@
 
   const runClassifier = async () => {
     const jobKey = getCurrentJobKey();
-    if (jobKey && jobKey === lastJobKey && document.getElementById(CHIP_ROW_ID)) return;
+    if (jobKey && jobKey === lastJobKey && document.getElementById(CHIP_ROW_ID)) {
+      // Same job, chips already rendered — only re-run if applicant count has improved
+      const freshCount = getApplicantCount();
+      if (freshCount === lastApplicantCount) return;
+      // Premium section loaded with a better number — fall through to re-render
+    }
 
     const titleEl = await waitForElement([
       ".job-details-jobs-unified-top-card__job-title",
@@ -205,7 +225,8 @@
         return allP.slice(0, descIdx).reverse().find(p => {
           const text = (p.childNodes[0]?.textContent || '').trim();
           return text.length >= 3 && text.length <= 120 &&
-                 !text.includes('·') && !text.includes('$') && !text.includes('@');
+                 !text.includes('·') && !text.includes('$') && !text.includes('@') &&
+                 !p.closest('a');
         }) || null;
       }
     ]);
@@ -215,18 +236,20 @@
     const descriptionText = getJobDescriptionText();
     if (!descriptionText) return;
 
-    const classification = window.JobLensClassifier.classifyJobText({
-      title: titleEl.innerText.trim(),
-      jd: descriptionText
-    });
+    const classification = window.JobLensClassifier.classifyJobText({ title: titleEl.innerText.trim(), jd: descriptionText });
     const expResult = window.JobLensClassifier.extractExperienceRequirement(descriptionText);
+    const compResult = window.JobLensClassifier.extractCompensation(descriptionText);
     const sponsorshipResult = window.JobLensClassifier.analyzeSponsorship(descriptionText);
+    const languages = window.JobLensClassifier.extractLanguages(descriptionText, titleEl.innerText.trim());
     const applicantCount = getApplicantCount();
 
     lastJobKey = getCurrentJobKey();
-    renderChipRow(titleEl, sponsorshipResult, classification, expResult, applicantCount);
+    lastApplicantCount = applicantCount;
+    renderChipRow(titleEl, sponsorshipResult, compResult, expResult, applicantCount, classification, languages);
     Highlighter.highlight(sponsorshipResult, descriptionText);
     Highlighter.highlightExperience(expResult?.rawMatch);
+    Highlighter.highlightCompensation(compResult?.rawMatch);
+    Highlighter.highlightLanguages(languages);
   };
 
   const observePage = () => {
