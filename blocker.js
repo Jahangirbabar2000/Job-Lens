@@ -81,8 +81,8 @@
   //   </div>
   //   <hr role="presentation">                   ← separator (hidden automatically with wrapper)
   //
-  // Company name: first <p> after the job-title <a href="/jobs/view/..."> link (structural, stable).
-  //   Fallback: legacy ._78ccd462 / p.bec82545 selectors in case of older DOM variants.
+  // Company name: walk <p> tags, skip multi-line headers / status lines / the job title itself.
+  //   No class names or hrefs used — LinkedIn rotates all of those.
 
   const getAllCards = () => {
     const dismissBtns = document.querySelectorAll(
@@ -101,45 +101,25 @@
   };
 
   const getCompanyFromCard = (cardEl) => {
-    // Strategy 1: anchor off job-title <a href="/jobs/view/..."> (works when LinkedIn uses real links)
-    const jobLink = cardEl.querySelector('a[href*="/jobs/view"]');
-    if (jobLink) {
-      const sib = jobLink.nextElementSibling;
-      if (sib && sib.tagName === 'P' && sib.innerText.trim()) return sib.innerText.trim();
-      const linkParent = jobLink.parentElement;
-      if (linkParent) {
-        for (const p of linkParent.querySelectorAll('p')) {
-          const t = p.innerText.trim();
-          if (t) return t;
-        }
-      }
-    }
-
-    // Strategy 2: legacy obfuscated class selectors
-    const cc = cardEl.querySelector('._78ccd462');
-    if (cc) { const p = cc.querySelector('p'); if (p && p.innerText.trim()) return p.innerText.trim(); }
-    for (const p of cardEl.querySelectorAll('p.bec82545')) {
-      if (!p.classList.contains('af237846') && p.innerText.trim()) return p.innerText.trim();
-    }
-
-    // Strategy 3: title-exclusion fallback — works regardless of class names or link structure.
-    // The Dismiss button aria-label is always "Dismiss [Job Title] job" (stable, never obfuscated).
-    // Extract the title from it, then pick the first <p> that:
-    //   • isn't the job title itself
-    //   • doesn't look like a location / status line (contains · • or common status words)
-    //   • is short enough to be a company name (≤ 80 chars)
+    // The Dismiss button aria-label is always "Dismiss [Job Title] job" — stable, never obfuscated.
+    // Use it to extract the job title so we can exclude it from company-name candidates.
     const dismissBtn = cardEl.querySelector('button[aria-label^="Dismiss "][aria-label$=" job"]');
-    if (dismissBtn) {
-      const jobTitle = dismissBtn.getAttribute('aria-label')
-        .replace(/^Dismiss\s+/i, '').replace(/\s+job$/i, '').trim().toLowerCase();
-      const STATUS_RE = /[·•]|\bago\b|\bapplicants\b|\bremote\b|\bhybrid\b|\bon.?site\b|\breposted\b|\bpromoted\b|\bactively\b/i;
-      for (const p of cardEl.querySelectorAll('p')) {
-        const t = (p.innerText || '').trim();
-        if (!t || t.length > 80) continue;
-        if (t.toLowerCase() === jobTitle) continue; // skip if title ended up in a <p>
-        if (STATUS_RE.test(t)) continue;
-        return t;
-      }
+    const jobTitle = dismissBtn
+      ? dismissBtn.getAttribute('aria-label')
+          .replace(/^Dismiss\s+/i, '').replace(/\s+job$/i, '').trim().toLowerCase()
+      : '';
+
+    // Patterns that mark a <p> as NOT a company name:
+    //   · or • separators, location keywords, status words, salary ($), "Easy Apply", etc.
+    const SKIP_RE = /[·•]|\bago\b|\bapplicants?\b|\bremote\b|\bhybrid\b|\bon.?site\b|\brepost|\bpromot|\bactively\b|\breviewing\b|\bviewed\b|\beasy.apply\b|\$[\d(]/i;
+
+    for (const p of cardEl.querySelectorAll('p')) {
+      const t = (p.innerText || '').trim();
+      if (!t || t.length < 2 || t.length > 100) continue;
+      if (t.includes('\n')) continue;               // multi-line = selected-card header, not a name
+      if (jobTitle && t.toLowerCase().includes(jobTitle)) continue; // skip if job title is a substring
+      if (SKIP_RE.test(t)) continue;
+      return t;
     }
 
     return null;
@@ -169,21 +149,29 @@
 
   // ── Hover ✕ buttons on left-panel cards ──────────────────────────────────────
 
-  const INJECTED_ATTR = 'data-joblens-block-injected';
+  // WeakSet instead of a data attribute: when the extension is reloaded without
+  // a page refresh, the new script gets a fresh WeakSet so it re-injects all cards,
+  // automatically removing stale buttons whose mousedown listeners are from the
+  // now-dead previous context.
+  const _injected = new WeakSet();
 
   const injectHoverButtons = () => {
     const cards = getAllCards();
     for (const card of cards) {
-      if (card.hasAttribute(INJECTED_ATTR)) continue;
-      card.setAttribute(INJECTED_ATTR, '1');
+      if (_injected.has(card)) continue;
+
+      // Remove any leftover buttons injected by a previous (now-invalid) context
+      card.querySelectorAll('.joblens-block-btn').forEach(b => b.remove());
+
+      _injected.add(card);
+      card.style.position = 'relative';
 
       const btn = document.createElement('button');
       btn.className = 'joblens-block-btn';
       btn.title = 'Block this company';
       btn.textContent = '✕';
 
-      // Use mousedown (fires before click) + capture phase so LinkedIn's own
-      // card-navigation handler — which runs on click/bubble — can't win the race
+      // mousedown + capture phase fires before LinkedIn's click-based navigation handler
       btn.addEventListener('mousedown', async (e) => {
         e.stopPropagation();
         e.stopImmediatePropagation();
@@ -196,16 +184,11 @@
       }, true);
 
       // CSS :hover can't target these cards (no stable parent class), so use JS events
-      card.addEventListener('mouseenter', () => {
-        btn.style.display = 'flex';
-      });
+      card.addEventListener('mouseenter', () => { btn.style.display = 'flex'; });
       card.addEventListener('mouseleave', () => {
-        // Keep visible after confirming (green ✓ state)
         if (btn.textContent !== '✓') btn.style.display = 'none';
       });
 
-      // Absolutely position at bottom-right of the card
-      card.style.position = 'relative';
       card.appendChild(btn);
     }
   };
