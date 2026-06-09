@@ -101,17 +101,11 @@
   };
 
   const getCompanyFromCard = (cardEl) => {
-    // Strategy 1 (most stable): anchor off the job-title <a href="/jobs/view/..."> link.
-    // LinkedIn always places the company name in the first <p> after the title anchor.
-    // Using an href pattern avoids obfuscated class names that LinkedIn rotates.
+    // Strategy 1: anchor off job-title <a href="/jobs/view/..."> (works when LinkedIn uses real links)
     const jobLink = cardEl.querySelector('a[href*="/jobs/view"]');
     if (jobLink) {
-      // Case A: <p> is a direct next sibling of the <a>
-      const directNext = jobLink.nextElementSibling;
-      if (directNext && directNext.tagName === 'P' && directNext.innerText.trim()) {
-        return directNext.innerText.trim();
-      }
-      // Case B: <a> is wrapped in a heading/strong — look for first <p> in the same parent
+      const sib = jobLink.nextElementSibling;
+      if (sib && sib.tagName === 'P' && sib.innerText.trim()) return sib.innerText.trim();
       const linkParent = jobLink.parentElement;
       if (linkParent) {
         for (const p of linkParent.querySelectorAll('p')) {
@@ -121,16 +115,30 @@
       }
     }
 
-    // Strategy 2: legacy obfuscated class selectors (kept as fallback in case
-    // LinkedIn hasn't migrated all regions / users see the old DOM)
-    const companyContainer = cardEl.querySelector('._78ccd462');
-    if (companyContainer) {
-      const p = companyContainer.querySelector('p');
-      if (p && p.innerText.trim()) return p.innerText.trim();
-    }
+    // Strategy 2: legacy obfuscated class selectors
+    const cc = cardEl.querySelector('._78ccd462');
+    if (cc) { const p = cc.querySelector('p'); if (p && p.innerText.trim()) return p.innerText.trim(); }
     for (const p of cardEl.querySelectorAll('p.bec82545')) {
-      if (!p.classList.contains('af237846') && p.innerText.trim()) {
-        return p.innerText.trim();
+      if (!p.classList.contains('af237846') && p.innerText.trim()) return p.innerText.trim();
+    }
+
+    // Strategy 3: title-exclusion fallback — works regardless of class names or link structure.
+    // The Dismiss button aria-label is always "Dismiss [Job Title] job" (stable, never obfuscated).
+    // Extract the title from it, then pick the first <p> that:
+    //   • isn't the job title itself
+    //   • doesn't look like a location / status line (contains · • or common status words)
+    //   • is short enough to be a company name (≤ 80 chars)
+    const dismissBtn = cardEl.querySelector('button[aria-label^="Dismiss "][aria-label$=" job"]');
+    if (dismissBtn) {
+      const jobTitle = dismissBtn.getAttribute('aria-label')
+        .replace(/^Dismiss\s+/i, '').replace(/\s+job$/i, '').trim().toLowerCase();
+      const STATUS_RE = /[·•]|\bago\b|\bapplicants\b|\bremote\b|\bhybrid\b|\bon.?site\b|\breposted\b|\bpromoted\b|\bactively\b/i;
+      for (const p of cardEl.querySelectorAll('p')) {
+        const t = (p.innerText || '').trim();
+        if (!t || t.length > 80) continue;
+        if (t.toLowerCase() === jobTitle) continue; // skip if title ended up in a <p>
+        if (STATUS_RE.test(t)) continue;
+        return t;
       }
     }
 
