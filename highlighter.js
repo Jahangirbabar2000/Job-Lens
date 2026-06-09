@@ -21,11 +21,25 @@ const Highlighter = (function () {
     '.jobs-search__job-details'
   ];
 
+  const _escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  // Build a finder for a phrase: single words use \b word boundaries so that
+  // "react" does NOT match inside "reacting", "reactive", etc.
+  function _makeFinder(phrase) {
+    const isSingleWord = !/\s/.test(phrase.trim());
+    if (isSingleWord) {
+      return new RegExp(`\\b${_escRe(phrase.trim())}\\b`, 'i');
+    }
+    // Multi-word phrase: plain case-insensitive substring match is fine
+    return null; // signals: use indexOf
+  }
+
   function highlightPhraseInElement(element, phrase, cssClass) {
     const highlightClass = cssClass || HIGHLIGHT_CLASS;
     try {
       const phraseTrimmed = phrase.trim();
       const phraseLower = phraseTrimmed.toLowerCase();
+      const finder = _makeFinder(phraseTrimmed);
       const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null);
 
       let textNode;
@@ -38,24 +52,32 @@ const Highlighter = (function () {
         }
 
         const nodeText = textNode.textContent;
-        const index = nodeText.toLowerCase().indexOf(phraseLower);
-
-        if (index !== -1) {
-          const highlightSpan = document.createElement('span');
-          highlightSpan.className = highlightClass;
-          highlightSpan.textContent = nodeText.substring(index, index + phraseTrimmed.length);
-
-          const parent = textNode.parentNode;
-          if (!parent) return false;
-
-          if (index > 0) parent.insertBefore(document.createTextNode(nodeText.substring(0, index)), textNode);
-          parent.insertBefore(highlightSpan, textNode);
-          const after = nodeText.substring(index + phraseTrimmed.length);
-          if (after) parent.insertBefore(document.createTextNode(after), textNode);
-          parent.removeChild(textNode);
-
-          return true;
+        let index, matchLength;
+        if (finder) {
+          const m = finder.exec(nodeText);
+          if (!m) continue;
+          index = m.index;
+          matchLength = m[0].length;
+        } else {
+          index = nodeText.toLowerCase().indexOf(phraseLower);
+          if (index === -1) continue;
+          matchLength = phraseTrimmed.length;
         }
+
+        const highlightSpan = document.createElement('span');
+        highlightSpan.className = highlightClass;
+        highlightSpan.textContent = nodeText.substring(index, index + matchLength);
+
+        const parent = textNode.parentNode;
+        if (!parent) return false;
+
+        if (index > 0) parent.insertBefore(document.createTextNode(nodeText.substring(0, index)), textNode);
+        parent.insertBefore(highlightSpan, textNode);
+        const after = nodeText.substring(index + matchLength);
+        if (after) parent.insertBefore(document.createTextNode(after), textNode);
+        parent.removeChild(textNode);
+
+        return true;
       }
     } catch (e) {
       return false;

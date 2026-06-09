@@ -174,7 +174,7 @@
     row.id = CHIP_ROW_ID;
     row.className = "joblens-chip-row";
 
-    // Order: Sponsorship → Applicants → Compensation → Experience → Language(s) → Software
+    // Order: Sponsorship → Applicants → Compensation → Experience → Language(s) → Software → Block
     row.appendChild(buildSponsorshipChip(sponsorshipResult));
     row.appendChild(buildApplicantsChip(applicantCount));
     row.appendChild(buildCompensationChip(compResult));

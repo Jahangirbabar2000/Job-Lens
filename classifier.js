@@ -497,6 +497,15 @@
         return { min: lo, display: `${lo}–${hi}${plus ? '+' : ''} yrs` };
       }
     },
+    // Written word range: "three to six years of X experience"
+    {
+      re: /\b(one|two|three|four|five|six|seven|eight|nine|ten)\s+to\s+(one|two|three|four|five|six|seven|eight|nine|ten)\s+years?'?\s+(?:of\s+)?(?:[\w-]+\s+){0,5}experience/gi,
+      parse: (m) => {
+        const W = { one:1, two:2, three:3, four:4, five:5, six:6, seven:7, eight:8, nine:9, ten:10 };
+        const lo = W[m[1].toLowerCase()], hi = W[m[2].toLowerCase()];
+        return { min: lo, display: `${lo}–${hi} yrs` };
+      }
+    },
     // Written words + optional parens: "four (4) years of SWE experience"
     {
       re: /\b(one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:\(\d+\)\s+)?years?'?\s+of(?:\s+[\w-]+){0,5}\s+experience/gi,
@@ -587,6 +596,14 @@
     return reqIdx >= prefIdx ? 'required' : 'preferred';
   };
 
+  // Negated experience claims: "nobody has 10 years of experience", "no one has X years", etc.
+  const EXPERIENCE_NEGATION = /\b(?:nobody|no\s+one|doesn't\s+have|does\s+not\s+have|don't\s+have|do\s+not\s+have|without|lack(?:ing)?)\b/i;
+
+  const isExperienceNegated = (normalized, matchIndex) => {
+    const window = normalized.substring(Math.max(0, matchIndex - 80), matchIndex);
+    return EXPERIENCE_NEGATION.test(window);
+  };
+
   const collectExperienceMatches = (normalized, patterns) => {
     const collected = [];
     for (const { re, parse } of patterns) {
@@ -595,6 +612,7 @@
       while ((m = re.exec(normalized)) !== null) {
         const start = m.index;
         const end = m.index + m[0].length;
+        if (isExperienceNegated(normalized, start)) continue;
         if (!collected.some((c) => start < c.end && end > c.start)) {
           const { min, display } = parse(m);
           collected.push({ min, display, rawMatch: m[0], start, end });
@@ -691,11 +709,17 @@
     /\bno\s+visa\s+support\b/i,
     /\bwill\s+not\s+sponsor\b/i,
     /\bsponsorship\s+not\s+provided\b/i,
+    /\bnot\s+eligible\s+for\s+(?:U\.?S\.?\s+)?immigration\s+sponsorship\b/i,
+    /\bnot\s+eligible\s+for\s+(?:visa|work\s+visa|employment)\s+sponsorship\b/i,
+    /\bimmigration\s+sponsorship\s+(?:is\s+)?not\s+(?:available|offered|provided)\b/i,
+    /\bno\s+immigration\s+sponsorship\b/i,
+    /\bnot\s+available\s+for\s+immigration\s+sponsorship\b/i,
     /\bU\.?S\.?\s+work\s+authorization\s+required\b/i,
     /\bcitizenship\s+required\b/i,
     /\bU\.?S\.?\s+citizenship\s+mandatory\b/i,
     /\bsecurity\s+clearance\s+required\b/i,
     /\bactive\s+security\s+clearance\s+required\b/i,
+    /\bactive\s+security\s+clearance\b/i,
     /\bactive\s+Top\s+Secret\s+security\s+clearance\b/i,
     /\bactive\s+Top\s+Secret\s+clearance\b/i,
     /\bactive\s+Secret\s+(?:U\.?S\.?\s+)?(?:security\s+)?clearance\b/i,
@@ -711,7 +735,7 @@
     /\bmust\s+obtain\s+security\s+clearance\b/i,
     /\bmust\s+have\s+active\s+security\s+clearance\b/i,
     /\bmust\s+possess\s+active\s+security\s+clearance\b/i,
-    /\bable\s+to\s+(?:obtain|maintain|obtain\/maintain)\s+(?:an?\s+)?(?:active\s+)?(?:Secret\s+|Top\s+Secret\s+)?(?:U\.?S\.?\s+)?(?:security\s+)?clearance\b/i,
+    /\b(?:able|ability)\s+to\s+(?:obtain|maintain|obtain\/maintain)\s+(?:an?\s+)?(?:active\s+)?(?:Secret\s+|Top\s+Secret\s+)?(?:U\.?S\.?\s+)?(?:security\s+)?clearance\b/i,
     /\bclearance\s+eligible\b/i,
     /\bsecurity\s+clearance\s+eligible\b/i,
     /\bsecurity\s+clearances?\s+may\s+only\s+be\s+granted\s+to\s+U\.?S\.?\s+citizens?\b/i,
@@ -749,8 +773,6 @@
     /\bH[-\s]?1B,\s*(?:STEM\s+)?OPT\b/i,
     /\bOPT,\s*CPT\b/i,
     /\btemporary\s+work\s+authorization["""]?\s+candidates\s+will\s+not\s+be\s+considered\b/i,
-    /\bno\s+C2C\b/i,
-    /\bno\s+corp\s*-?\s*to\s*-?\s*corp\b/i,
     /\bor\s+sponsorship\s+for\s+this\s+role\b/i,
     /\bno\s+(?:C2C|corp)[^.]{0,80}sponsorship\b/i
   ];
@@ -765,6 +787,18 @@
     /\bclearance\s+preferred\b/i,
     /\bclearance\s+is\s+preferred\b/i
   ];
+
+  // Stop a look-back window at hard clause boundaries (; newline) to avoid cross-clause false signals.
+  const trimToClause = (window) => window.replace(/^[\s\S]*[;\n]/, "");
+
+  // Concept fragments for the additive semantic negative detector.
+  const SEMANTIC_SPONSOR_TERM = /\bsponsor(?:s|ship|ing|ed)?\b/gi;
+  const SEMANTIC_SENTENCE_NEGATION = /\b(?:not\s+able|may\s+not|cannot|can't|will\s+not|won't|does\s+not|do\s+not|unable\s+to|no\s+)\b/i;
+  const SEMANTIC_US_PERSON = /\bU\.?S\.?\s+persons?\b/i;
+  const SEMANTIC_EXPORT_CONTROL = /\bexport\s+control\b/i;
+  const SEMANTIC_STATUS_REQ = /\b(?:U\.?S\.?\s+)?(?:citizens?|citizenship|national|permanent\s+resident|green\s+card)\b/i;
+  const SEMANTIC_RESTRICTED_STATUS = /\b(?:U\.?S\.?\s+persons?|U\.?S\.?\s+citizens?|citizenship|permanent\s+resident|green\s+card)\b/i;
+  const SEMANTIC_OBLIGATION = /\b(?:must\s+be|required\s+to\s+be|candidates?\s+must|applicants?\s+must|you\s+must\s+be)\b/i;
 
   const SPONSORSHIP_NEGATION_PATTERNS = [
     /\bno\s+/i,
@@ -781,7 +815,7 @@
   const isSponsorshipNegated = (text, matchIndex) => {
     const contextBefore = text.substring(Math.max(0, matchIndex - 50), matchIndex).toLowerCase();
     for (const negPattern of SPONSORSHIP_NEGATION_PATTERNS) {
-      const extended = new RegExp(negPattern.source + "[^.]{0,50}$", "i");
+      const extended = new RegExp(negPattern.source + "[^.;:\\n]{0,50}$", "i");
       if (extended.test(contextBefore)) return true;
     }
     return false;
@@ -797,6 +831,43 @@
     return matches;
   };
 
+  // Additive semantic detector: catches paraphrased denials the literal lists miss.
+  // Returns short trigger snippets (kept short so the highlighter can match them in a text node).
+  const detectNegativeSponsorshipSemantics = (text) => {
+    const hits = [];
+
+    // Sentence-scoped pass — used for Rules A (extended), C, D.
+    const sentences = text.split(/(?<=[.!?;])\s+|\n+/);
+
+    // Rule A — negated sponsorship: 50-char proximity OR 300-char window negation.
+    SEMANTIC_SPONSOR_TERM.lastIndex = 0;
+    let m;
+    while ((m = SEMANTIC_SPONSOR_TERM.exec(text)) !== null) {
+      if (isSponsorshipNegated(text, m.index)) { hits.push(m[0]); continue; }
+      // Wider net: scan up to 300 chars back, stopping at clause boundaries (; \n).
+      const raw = text.substring(Math.max(0, m.index - 300), m.index);
+      if (SEMANTIC_SENTENCE_NEGATION.test(trimToClause(raw))) hits.push(m[0]);
+    }
+
+    // Rule B — "U.S. Person": export-control legal term, near-always restrictive.
+    const usPerson = text.match(SEMANTIC_US_PERSON);
+    if (usPerson) hits.push(usPerson[0]);
+
+    for (const sentence of sentences) {
+      // Rule C — export control paired with a US-status requirement.
+      const exportMatch = sentence.match(SEMANTIC_EXPORT_CONTROL);
+      if (exportMatch && SEMANTIC_STATUS_REQ.test(sentence)) hits.push(exportMatch[0]);
+
+      // Rule D — obligation paired with a restricted status (citizen / person / PR / green card).
+      if (SEMANTIC_OBLIGATION.test(sentence)) {
+        const statusMatch = sentence.match(SEMANTIC_RESTRICTED_STATUS);
+        if (statusMatch) hits.push(statusMatch[0]);
+      }
+    }
+
+    return hits;
+  };
+
   const analyzeSponsorship = (jobDescription) => {
     if (!jobDescription || typeof jobDescription !== "string") {
       return { status: "unclear", confidence: "low", matchedKeywords: [], details: { strongPositive: [], moderatePositive: [], strongNegative: [], moderateNegative: [] } };
@@ -804,14 +875,24 @@
 
     const matched = { strongPositive: [], moderatePositive: [], strongNegative: [], moderateNegative: [] };
 
+    // Check up to 300 chars before a positive match for a negation signal (wider than isSponsorshipNegated's 50-char window).
+    const isPositiveNegatedWide = (text, matchIndex) => {
+      if (isSponsorshipNegated(text, matchIndex)) return true;
+      const raw = text.substring(Math.max(0, matchIndex - 300), matchIndex);
+      const clauseWindow = trimToClause(raw);
+      return SEMANTIC_SENTENCE_NEGATION.test(clauseWindow);
+    };
+
     for (const pattern of SPONSORSHIP_STRONG_POSITIVE) {
       for (const m of findSponsorshipMatches(pattern, jobDescription)) {
-        if (!isSponsorshipNegated(jobDescription, m.index)) matched.strongPositive.push(m.text);
+        if (!isPositiveNegatedWide(jobDescription, m.index))
+          matched.strongPositive.push(m.text);
       }
     }
     for (const pattern of SPONSORSHIP_MODERATE_POSITIVE) {
       for (const m of findSponsorshipMatches(pattern, jobDescription)) {
-        if (!isSponsorshipNegated(jobDescription, m.index)) matched.moderatePositive.push(m.text);
+        if (!isPositiveNegatedWide(jobDescription, m.index))
+          matched.moderatePositive.push(m.text);
       }
     }
     for (const pattern of SPONSORSHIP_STRONG_NEGATIVE) {
@@ -824,6 +905,12 @@
         matched.moderateNegative.push(m.text);
       }
     }
+
+    // Additive semantic layer — merge paraphrase-tolerant denials into strong negatives.
+    for (const snippet of detectNegativeSponsorshipSemantics(jobDescription)) {
+      matched.strongNegative.push(snippet);
+    }
+    matched.strongNegative = [...new Set(matched.strongNegative)];
 
     let status, confidence;
     if (matched.strongNegative.length > 0)       { status = "no";  confidence = "high"; }
@@ -912,7 +999,7 @@
     },
     // ── Python (priority 1 — user's primary target) ──
     {
-      name: "Python", priority: 1,
+      name: "Python", priority: 1, threshold: 1,
       keywords: [
         { w: "python", weight: 1 }, { w: "django", weight: 1 }, { w: "flask", weight: 1 },
         { w: "fastapi", weight: 1 }, { w: "numpy", weight: 1 }, { w: "pandas", weight: 1 },
@@ -1012,7 +1099,10 @@
         const sw = SECTION_WEIGHTS[section.type] ?? SECTION_WEIGHTS.other;
         for (const kw of lang.keywords) {
           const { w, weight, isRegex, hl } = kw;
-          const pattern = isRegex ? new RegExp(w, "gi") : new RegExp(escapeRegex(w), "gi");
+          const esc = escapeRegex(w);
+          const pre = /^\w/.test(w) ? "\\b" : "";
+          const suf = /\w$/.test(w) ? "\\b" : "";
+          const pattern = isRegex ? new RegExp(w, "gi") : new RegExp(`${pre}${esc}${suf}`, "gi");
           const matches = section.text.match(pattern);
           if (matches) {
             score += matches.length * weight * sw;
@@ -1043,8 +1133,15 @@
       return true;
     });
 
-    // Sort by user-priority ASC first, score DESC second — Python/React always surface over Java
-    filtered.sort((a, b) => a.priority !== b.priority ? a.priority - b.priority : b.score - a.score);
+    // Sort by score/priority composite (higher = better), then break ties by priority ASC.
+    // This lets Python (priority 1) win when scores are equal, but a high-scoring React/Ruby
+    // still beats a single-mention Python.
+    const rank = e => e.score / e.priority;
+    filtered.sort((a, b) => {
+      const diff = rank(b) - rank(a);
+      if (Math.abs(diff) > 0.001) return diff;      // clear composite winner
+      return a.priority - b.priority;               // tie → prefer higher-priority language
+    });
 
     return filtered.slice(0, 2).map(({ name, score, matchedKeywords }) => ({ name, score, matchedKeywords }));
   };

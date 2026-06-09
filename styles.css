@@ -136,3 +136,61 @@
   border-radius: 2px;
   padding: 0 2px;
 }
+
+/* ── Blocker ─────────────────────────────────────────────────────────────── */
+
+/* "Block Company" chip in the chip row */
+.joblens-chip--block {
+  background: #fdecea;
+  color: #b42318;
+  border-color: #f7c2bd;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.joblens-chip--block:hover {
+  background: #f7c2bd;
+  color: #7a1208;
+}
+
+/* Confirmed state after blocking */
+.joblens-chip--blocked-confirm {
+  background: #e6f4ea;
+  color: #1e7f34;
+  border-color: #b7e1c0;
+  cursor: default;
+}
+
+/* Hidden blocked cards in left panel */
+.joblens-blocked-card {
+  display: none !important;
+}
+
+/* ✕ hover button on left-panel job cards */
+.joblens-block-btn {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #b42318;
+  color: #fff;
+  border: none;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  display: none;           /* shown via JS mouseenter */
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 10;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+  transition: background 0.15s, transform 0.1s;
+}
+.joblens-block-btn:hover {
+  background: #7a1208;
+  transform: scale(1.1);
+}
+
+/* Show/hide is handled via JS mouseenter/mouseleave in blocker.js
+   (LinkedIn's new DOM uses obfuscated class names with no stable CSS hook) */
