@@ -81,7 +81,8 @@
   //   </div>
   //   <hr role="presentation">                   ← separator (hidden automatically with wrapper)
   //
-  // Company name: <p> inside ._78ccd462 within the card, OR fallback p.bec82545 (not p.af237846).
+  // Company name: first <p> after the job-title <a href="/jobs/view/..."> link (structural, stable).
+  //   Fallback: legacy ._78ccd462 / p.bec82545 selectors in case of older DOM variants.
 
   const getAllCards = () => {
     const dismissBtns = document.querySelectorAll(
@@ -100,18 +101,39 @@
   };
 
   const getCompanyFromCard = (cardEl) => {
-    // Primary: ._78ccd462 consistently wraps the company/location line
+    // Strategy 1 (most stable): anchor off the job-title <a href="/jobs/view/..."> link.
+    // LinkedIn always places the company name in the first <p> after the title anchor.
+    // Using an href pattern avoids obfuscated class names that LinkedIn rotates.
+    const jobLink = cardEl.querySelector('a[href*="/jobs/view"]');
+    if (jobLink) {
+      // Case A: <p> is a direct next sibling of the <a>
+      const directNext = jobLink.nextElementSibling;
+      if (directNext && directNext.tagName === 'P' && directNext.innerText.trim()) {
+        return directNext.innerText.trim();
+      }
+      // Case B: <a> is wrapped in a heading/strong — look for first <p> in the same parent
+      const linkParent = jobLink.parentElement;
+      if (linkParent) {
+        for (const p of linkParent.querySelectorAll('p')) {
+          const t = p.innerText.trim();
+          if (t) return t;
+        }
+      }
+    }
+
+    // Strategy 2: legacy obfuscated class selectors (kept as fallback in case
+    // LinkedIn hasn't migrated all regions / users see the old DOM)
     const companyContainer = cardEl.querySelector('._78ccd462');
     if (companyContainer) {
       const p = companyContainer.querySelector('p');
       if (p && p.innerText.trim()) return p.innerText.trim();
     }
-    // Fallback: p.bec82545 is the company class; af237846 is the job-title class — skip that
     for (const p of cardEl.querySelectorAll('p.bec82545')) {
       if (!p.classList.contains('af237846') && p.innerText.trim()) {
         return p.innerText.trim();
       }
     }
+
     return null;
   };
 
@@ -152,15 +174,18 @@
       btn.title = 'Block this company';
       btn.textContent = '✕';
 
-      btn.addEventListener('click', async (e) => {
+      // Use mousedown (fires before click) + capture phase so LinkedIn's own
+      // card-navigation handler — which runs on click/bubble — can't win the race
+      btn.addEventListener('mousedown', async (e) => {
         e.stopPropagation();
+        e.stopImmediatePropagation();
         e.preventDefault();
         const company = getCompanyFromCard(card);
         if (!company) return;
         await addCompany(company);
         btn.textContent = '✓';
         btn.style.background = '#1e7f34';
-      });
+      }, true);
 
       // CSS :hover can't target these cards (no stable parent class), so use JS events
       card.addEventListener('mouseenter', () => {
