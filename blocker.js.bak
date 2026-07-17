@@ -1,0 +1,164 @@
+(function () {
+  'use strict';
+
+  const STORAGE_KEY = 'joblensBlockedCompanies';
+  const SEED = ['jack'];
+
+  // ── Storage helpers ──────────────────────────────────────────────────────────
+
+  const normalize = (name) => name.trim().toLowerCase();
+
+  const getBlocklist = () =>
+    new Promise((resolve) => {
+      chrome.storage.local.get([STORAGE_KEY], (result) => {
+        if (result[STORAGE_KEY] === undefined) {
+          // First run — seed the list
+          chrome.storage.local.set({ [STORAGE_KEY]: SEED }, () => resolve([...SEED]));
+        } else {
+          resolve(result[STORAGE_KEY]);
+        }
+      });
+    });
+
+  const saveBlocklist = (list) =>
+    new Promise((resolve) => chrome.storage.local.set({ [STORAGE_KEY]: list }, resolve));
+
+  const addCompany = async (name) => {
+    const key = normalize(name);
+    if (!key) return;
+    const list = await getBlocklist();
+    if (!list.includes(key)) {
+      list.push(key);
+      await saveBlocklist(list);
+    }
+    applyToCards();
+  };
+
+  const removeCompany = async (name) => {
+    const key = normalize(name);
+    const list = await getBlocklist();
+    const updated = list.filter((c) => c !== key);
+    await saveBlocklist(updated);
+    applyToCards();
+  };
+
+  const isBlocked = async (name) => {
+    const key = normalize(name);
+    const list = await getBlocklist();
+    return list.includes(key);
+  };
+
+  // ── DOM helpers ──────────────────────────────────────────────────────────────
+
+  const CARD_SELECTORS = [
+    'li.jobs-search-results__list-item',
+    'li[data-occludable-job-id]',
+  ];
+
+  const COMPANY_SELECTORS = [
+    '.artdeco-entity-lockup__subtitle span',
+    '.job-card-container__primary-description',
+    '.job-card-list__entity-lockup .job-card-container__primary-description',
+    'h4.base-search-card__subtitle',
+    '.hidden-nested-link',
+  ];
+
+  const getAllCards = () => {
+    for (const sel of CARD_SELECTORS) {
+      const cards = document.querySelectorAll(sel);
+      if (cards.length) return Array.from(cards);
+    }
+    return [];
+  };
+
+  const getCompanyFromCard = (card) => {
+    for (const sel of COMPANY_SELECTORS) {
+      const el = card.querySelector(sel);
+      if (el && el.innerText.trim()) return el.innerText.trim();
+    }
+    return null;
+  };
+
+  // ── Apply blocklist to all visible cards ─────────────────────────────────────
+
+  const applyToCards = async () => {
+    const list = await getBlocklist();
+    const cards = getAllCards();
+    for (const card of cards) {
+      const company = getCompanyFromCard(card);
+      if (!company) continue;
+      const blocked = list.includes(normalize(company));
+      card.classList.toggle('joblens-blocked-card', blocked);
+    }
+  };
+
+  // ── Hover ✕ buttons on left-panel cards ──────────────────────────────────────
+
+  const INJECTED_ATTR = 'data-joblens-block-injected';
+
+  const injectHoverButtons = () => {
+    const cards = getAllCards();
+    for (const card of cards) {
+      if (card.hasAttribute(INJECTED_ATTR)) continue;
+      card.setAttribute(INJECTED_ATTR, '1');
+
+      const btn = document.createElement('button');
+      btn.className = 'joblens-block-btn';
+      btn.title = 'Block this company';
+      btn.textContent = '✕';
+
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        const company = getCompanyFromCard(card);
+        if (!company) return;
+        await addCompany(company);
+        // Flash confirmation before card vanishes
+        btn.textContent = '✓';
+        btn.style.background = '#1e7f34';
+      });
+
+      card.style.position = 'relative';
+      card.appendChild(btn);
+    }
+  };
+
+  // ── Observe the job list for new cards ───────────────────────────────────────
+
+  const observeJobList = () => {
+    let debounce;
+    const observer = new MutationObserver(() => {
+      clearTimeout(debounce);
+      debounce = setTimeout(() => {
+        applyToCards();
+        injectHoverButtons();
+      }, 300);
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+  };
+
+  // ── Init ─────────────────────────────────────────────────────────────────────
+
+  const init = () => {
+    applyToCards();
+    injectHoverButtons();
+    observeJobList();
+  };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+
+  // ── Public API ───────────────────────────────────────────────────────────────
+
+  window.JobLensBlocker = {
+    getBlocklist,
+    addCompany,
+    removeCompany,
+    isBlocked,
+    applyToCards,
+    injectHoverButtons,
+  };
+})();
