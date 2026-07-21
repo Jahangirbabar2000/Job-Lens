@@ -2,6 +2,9 @@
   'use strict';
 
   const STORAGE_KEY = 'joblensBlockedCompanies';
+  const APPLIED_KEY = 'joblensAppliedCompanies';
+  const SHOW_APPLIED_KEY = 'joblensShowApplied';
+  const APPLIED_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
   const SEED = ['jack'];
 
   // ── Context guard ────────────────────────────────────────────────────────────
@@ -40,6 +43,59 @@
       catch { resolve(); }
     });
 
+  const getAppliedCompanies = () =>
+    new Promise((resolve) => {
+      if (!isContextValid()) return resolve([]);
+      try {
+        chrome.storage.local.get([APPLIED_KEY], (result) => {
+          if (chrome.runtime.lastError) return resolve([]);
+          resolve(Array.isArray(result[APPLIED_KEY]) ? result[APPLIED_KEY] : []);
+        });
+      } catch { resolve([]); }
+    });
+
+  /** Entries with applied_at within the last 90 days (normalized name list for matching). */
+  const getRecentAppliedNames = async () => {
+    const list = await getAppliedCompanies();
+    const cutoff = Date.now() - APPLIED_WINDOW_MS;
+    const names = [];
+    for (const entry of list) {
+      if (!entry || !entry.name) continue;
+      const at = entry.at ? new Date(entry.at).getTime() : NaN;
+      if (!Number.isFinite(at) || at < cutoff) continue;
+      names.push(normalize(entry.name));
+    }
+    return names;
+  };
+
+  /** When true, applied companies stay visible with a badge instead of being hidden. Default: hide. */
+  const getShowApplied = () =>
+    new Promise((resolve) => {
+      if (!isContextValid()) return resolve(false);
+      try {
+        chrome.storage.local.get([SHOW_APPLIED_KEY], (result) => {
+          if (chrome.runtime.lastError) return resolve(false);
+          resolve(!!result[SHOW_APPLIED_KEY]);
+        });
+      } catch { resolve(false); }
+    });
+
+  const setAppliedBadge = (cardEl, show) => {
+    let badge = cardEl.querySelector('.joblens-applied-badge');
+    if (show) {
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'joblens-applied-badge';
+        badge.textContent = 'Applied';
+        badge.title = 'You applied to this company in the last 90 days';
+        cardEl.style.position = 'relative';
+        cardEl.appendChild(badge);
+      }
+    } else if (badge) {
+      badge.remove();
+    }
+  };
+
   const addCompany = async (name) => {
     const key = normalize(name);
     if (!key) return;
@@ -60,10 +116,13 @@
   };
 
   // Partial match: stored "jack" will block "Jack & Jill Inc"; "google" blocks "Google LLC"
+  const matchesList = (key, list) =>
+    list.some((c) => key.includes(c) || c.includes(key));
+
   const isBlocked = async (name) => {
     const key = normalize(name);
     const list = await getBlocklist();
-    return list.some((c) => key.includes(c) || c.includes(key));
+    return matchesList(key, list);
   };
 
   // ── DOM helpers ──────────────────────────────────────────────────────────────
@@ -132,18 +191,26 @@
     return cardEl;
   };
 
-  // ── Apply blocklist to all visible cards ─────────────────────────────────────
+  // ── Apply blocklist + applied list to all visible cards ─────────────────────
 
   const applyToCards = async () => {
-    const list = await getBlocklist();
+    const [blocklist, appliedNames, showApplied] = await Promise.all([
+      getBlocklist(),
+      getRecentAppliedNames(),
+      getShowApplied(),
+    ]);
     const cards = getAllCards();
     for (const card of cards) {
       const company = getCompanyFromCard(card);
       if (!company) continue;
       const key = normalize(company);
-      const blocked = list.some((c) => key.includes(c) || c.includes(key));
+      const blocked = matchesList(key, blocklist);
+      const applied = !blocked && matchesList(key, appliedNames);
       const target = getHideTarget(card);
       target.classList.toggle('joblens-blocked-card', blocked);
+      // Hide when applied unless the user opted to show them with a badge
+      target.classList.toggle('joblens-applied-card', applied && !showApplied);
+      setAppliedBadge(card, applied && showApplied);
     }
   };
 
@@ -207,12 +274,35 @@
     observer.observe(document.body, { childList: true, subtree: true });
   };
 
+  const requestMaybeSync = () => {
+    if (!isContextValid()) return;
+    try {
+      chrome.runtime.sendMessage({ type: 'joblensMaybeSync' }, () => {
+        void chrome.runtime.lastError; // ignore if SW not ready
+      });
+    } catch { /* stale context */ }
+  };
+
+  const watchStorage = () => {
+    if (!isContextValid()) return;
+    try {
+      chrome.storage.onChanged.addListener((changes, area) => {
+        if (area !== 'local') return;
+        if (changes[STORAGE_KEY] || changes[APPLIED_KEY] || changes[SHOW_APPLIED_KEY]) {
+          applyToCards();
+        }
+      });
+    } catch { /* stale context */ }
+  };
+
   // ── Init ─────────────────────────────────────────────────────────────────────
 
   const init = () => {
+    requestMaybeSync();
     applyToCards();
     injectHoverButtons();
     observeJobList();
+    watchStorage();
   };
 
   if (document.readyState === 'loading') {
@@ -225,6 +315,8 @@
 
   window.JobLensBlocker = {
     getBlocklist,
+    getAppliedCompanies,
+    getRecentAppliedNames,
     addCompany,
     removeCompany,
     isBlocked,

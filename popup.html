@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>JobLens — Blocked Companies</title>
+  <title>JobLens</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -12,14 +12,13 @@
       font-size: 13px;
       background: #ffffff;
       color: #1a1a1a;
-      width: 320px;
+      width: 340px;
       min-height: 100px;
-      max-height: 480px;
+      max-height: 520px;
       display: flex;
       flex-direction: column;
     }
 
-    /* Header */
     .header {
       padding: 14px 16px 10px;
       border-bottom: 1px solid #e5e7eb;
@@ -37,7 +36,31 @@
       margin-top: 2px;
     }
 
-    /* Add form */
+    .tabs {
+      display: flex;
+      border-bottom: 1px solid #e5e7eb;
+      background: #fff;
+    }
+    .tab {
+      flex: 1;
+      padding: 8px 12px;
+      border: none;
+      background: transparent;
+      font-size: 12px;
+      font-weight: 600;
+      color: #6b7280;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+    }
+    .tab:hover { color: #111827; background: #f9fafb; }
+    .tab.active {
+      color: #111827;
+      border-bottom-color: #111827;
+    }
+
+    .panel { display: none; flex-direction: column; flex: 1; min-height: 0; }
+    .panel.active { display: flex; }
+
     .add-form {
       display: flex;
       gap: 6px;
@@ -70,7 +93,107 @@
     }
     .add-form button:hover { background: #374151; }
 
-    /* List */
+    .toggle-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 16px;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    .toggle-label {
+      flex: 1;
+      min-width: 0;
+    }
+    .toggle-label strong {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: #111827;
+    }
+    .toggle-label span {
+      display: block;
+      font-size: 10px;
+      color: #6b7280;
+      margin-top: 2px;
+      line-height: 1.35;
+    }
+    .toggle {
+      position: relative;
+      flex-shrink: 0;
+      width: 36px;
+      height: 20px;
+      cursor: pointer;
+    }
+    .toggle input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+      position: absolute;
+    }
+    .toggle-track {
+      position: absolute;
+      inset: 0;
+      background: #d1d5db;
+      border-radius: 999px;
+      transition: background 0.15s;
+    }
+    .toggle-track::after {
+      content: "";
+      position: absolute;
+      width: 16px;
+      height: 16px;
+      left: 2px;
+      top: 2px;
+      background: #fff;
+      border-radius: 50%;
+      transition: transform 0.15s;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+    }
+    .toggle input:checked + .toggle-track {
+      background: #f5a623;
+    }
+    .toggle input:checked + .toggle-track::after {
+      transform: translateX(16px);
+    }
+    .toggle input:focus-visible + .toggle-track {
+      box-shadow: 0 0 0 2px rgba(245,166,35,0.35);
+    }
+
+    .sync-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 10px 16px;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    .sync-meta {
+      flex: 1;
+      min-width: 0;
+      font-size: 11px;
+      color: #6b7280;
+      line-height: 1.35;
+    }
+    .sync-meta .error { color: #b42318; }
+    .sync-btn {
+      flex-shrink: 0;
+      padding: 5px 12px;
+      background: #111827;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .sync-btn:hover { background: #374151; }
+    .sync-btn:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+
     .list-container {
       flex: 1;
       overflow-y: auto;
@@ -102,6 +225,12 @@
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+    .company-sub {
+      display: block;
+      font-size: 10px;
+      color: #9ca3af;
+      margin-top: 1px;
+    }
 
     .remove-btn {
       flex-shrink: 0;
@@ -124,7 +253,6 @@
       color: #b42318;
     }
 
-    /* Footer */
     .footer {
       padding: 8px 16px;
       border-top: 1px solid #e5e7eb;
@@ -136,20 +264,46 @@
 </head>
 <body>
   <div class="header">
-    <h1>JobLens — Blocked Companies</h1>
-    <p>Jobs from these companies are hidden on LinkedIn.</p>
+    <h1>JobLens</h1>
+    <p id="header-sub">Jobs from blocked companies are hidden on LinkedIn.</p>
   </div>
 
-  <div class="add-form">
-    <input type="text" id="add-input" placeholder="Company name…" autocomplete="off" />
-    <button id="add-btn">Add</button>
+  <div class="tabs">
+    <button class="tab active" data-tab="blocked" id="tab-blocked">Blocked</button>
+    <button class="tab" data-tab="applied" id="tab-applied">Applied</button>
   </div>
 
-  <div class="list-container" id="list-container">
-    <div class="empty-state" id="empty-state">No companies blocked yet.</div>
+  <div class="panel active" id="panel-blocked">
+    <div class="add-form">
+      <input type="text" id="add-input" placeholder="Company name…" autocomplete="off" />
+      <button id="add-btn">Add</button>
+    </div>
+    <div class="list-container" id="blocked-list">
+      <div class="empty-state" id="blocked-empty">No companies blocked yet.</div>
+    </div>
+    <div class="footer" id="blocked-footer"></div>
   </div>
 
-  <div class="footer" id="footer"></div>
+  <div class="panel" id="panel-applied">
+    <div class="toggle-bar">
+      <div class="toggle-label">
+        <strong>Show on LinkedIn</strong>
+        <span>When on, applied companies stay visible with a yellow badge</span>
+      </div>
+      <label class="toggle" title="Show applied companies on LinkedIn with a badge">
+        <input type="checkbox" id="show-applied-toggle" />
+        <span class="toggle-track"></span>
+      </label>
+    </div>
+    <div class="sync-bar">
+      <div class="sync-meta" id="sync-meta">Not synced yet</div>
+      <button class="sync-btn" id="sync-btn">Sync now</button>
+    </div>
+    <div class="list-container" id="applied-list">
+      <div class="empty-state" id="applied-empty">No recently applied companies.</div>
+    </div>
+    <div class="footer" id="applied-footer"></div>
+  </div>
 
   <script src="popup.js"></script>
 </body>
