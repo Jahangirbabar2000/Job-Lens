@@ -5,6 +5,13 @@
   const EXPERIENCE_CHIP_ID = "joblens-experience-chip";
   const COMPENSATION_CHIP_ID = "joblens-compensation-chip";
   const SPONSORSHIP_CHIP_ID = "joblens-sponsorship-chip";
+  const APPLIED_CHIP_ID = "joblens-applied-status-chip";
+
+  // Mirror of blocker.js helpers (content scripts share a page but not scope).
+  const normalize = (s) => (s || "").trim().toLowerCase();
+  // Partial match: stored "google" matches "Google LLC" and vice-versa.
+  const matchesList = (key, list) =>
+    list.some((c) => c && (key.includes(c) || c.includes(key)));
 
   const waitForElement = (selectors, timeoutMs = 10000) => {
     return new Promise((resolve) => {
@@ -166,7 +173,83 @@
       makeChip(`joblens-lang-chip-${i}`, "joblens-chip--language", lang.name)
     );
 
-  const renderChipRow = (titleEl, sponsorshipResult, compResult, expResult, applicantCount, classification, languages) => {
+  // Company name on the job-view page. LinkedIn rotates class names, so try the
+  // known top-card selectors first, then fall back to the /company/ link nearest
+  // the job title (stable across the new obfuscated layouts).
+  const getCompanyName = (titleEl) => {
+    const clean = (s) => (s || "").replace(/\s+/g, " ").trim();
+
+    for (const sel of [
+      ".job-details-jobs-unified-top-card__company-name a",
+      ".job-details-jobs-unified-top-card__company-name",
+      ".jobs-unified-top-card__company-name a",
+      ".jobs-unified-top-card__company-name",
+    ]) {
+      const el = document.querySelector(sel);
+      const t = clean(el && el.innerText);
+      if (t) return t;
+    }
+
+    if (titleEl) {
+      const tRect = titleEl.getBoundingClientRect();
+      let best = null, bestDist = Infinity;
+      for (const a of document.querySelectorAll('a[href*="/company/"]')) {
+        const t = clean(a.innerText);
+        if (!t || t.length > 100) continue;
+        const r = a.getBoundingClientRect();
+        if (r.width === 0 && r.height === 0) continue;
+        const dist = Math.abs(r.top - tRect.top);
+        if (dist < bestDist) { bestDist = dist; best = t; }
+      }
+      if (best) return best;
+    }
+
+    const anyLink = document.querySelector('a[href*="/company/"]');
+    return clean(anyLink && anyLink.innerText) || null;
+  };
+
+  // Applied-status chip — shown ONLY when you've applied to this company (or this
+  // exact company/role) within the last 90 days. Matches the "Applied" tab styling:
+  //   company mode → orange "Applied"
+  //   role mode    → red "Applied · This role"  OR  yellow "Applied here"
+  const buildAppliedChip = async (companyName, jobTitle) => {
+    const B = window.JobLensBlocker;
+    if (!B || !companyName) return null;
+
+    let appliedEntries = [];
+    let hideMode = "company";
+    try {
+      [appliedEntries, hideMode] = await Promise.all([
+        B.getRecentApplied(),
+        B.getAppliedHideMode(),
+      ]);
+    } catch { return null; }
+    if (!appliedEntries.length) return null;
+
+    const companyKey = normalize(companyName);
+    const appliedNames = appliedEntries.map((e) => e.name);
+    if (!matchesList(companyKey, appliedNames)) return null; // not applied → no chip
+
+    if (hideMode === "role") {
+      const titleKey = normalize(jobTitle);
+      const roleMatch = appliedEntries.find((e) =>
+        matchesList(companyKey, [e.name]) &&
+        e.title && titleKey &&
+        (titleKey.includes(e.title) || e.title.includes(titleKey))
+      );
+      if (roleMatch) {
+        const label = roleMatch.title.charAt(0).toUpperCase() + roleMatch.title.slice(1);
+        return makeChip(APPLIED_CHIP_ID, "joblens-chip--applied-role", "Applied · This role", `Applied for: ${label}`);
+      }
+      return makeChip(APPLIED_CHIP_ID, "joblens-chip--co-applied", "Applied here",
+        "You applied to this company for a different role in the last 90 days");
+    }
+
+    return makeChip(APPLIED_CHIP_ID, "joblens-chip--applied", "Applied",
+      "You applied to this company in the last 90 days");
+  };
+
+  const renderChipRow = (titleEl, sponsorshipResult, compResult, expResult, applicantCount, classification, languages, appliedChip) => {
     const existing = document.getElementById(CHIP_ROW_ID);
     if (existing) existing.remove();
 
@@ -181,6 +264,7 @@
     row.appendChild(buildExperienceChip(expResult));
     buildLanguageChips(languages).forEach(chip => row.appendChild(chip));
     row.appendChild(buildSoftwareChip(classification));
+    if (appliedChip) row.appendChild(appliedChip);
 
     titleEl.appendChild(row);
   };
@@ -243,9 +327,12 @@
     const languages = window.JobLensClassifier.extractLanguages(descriptionText, titleEl.innerText.trim());
     const applicantCount = getApplicantCount();
 
+    const companyName = getCompanyName(titleEl);
+    const appliedChip = await buildAppliedChip(companyName, titleEl.innerText.trim());
+
     lastJobKey = getCurrentJobKey();
     lastApplicantCount = applicantCount;
-    renderChipRow(titleEl, sponsorshipResult, compResult, expResult, applicantCount, classification, languages);
+    renderChipRow(titleEl, sponsorshipResult, compResult, expResult, applicantCount, classification, languages, appliedChip);
     Highlighter.highlight(sponsorshipResult, descriptionText);
     Highlighter.highlightExperience(expResult?.rawMatch);
     Highlighter.highlightCompensation(compResult?.rawMatch);

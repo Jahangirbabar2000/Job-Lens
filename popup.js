@@ -3,6 +3,7 @@
 const BLOCKED_KEY = 'joblensBlockedCompanies';
 const APPLIED_KEY = 'joblensAppliedCompanies';
 const SHOW_APPLIED_KEY = 'joblensShowApplied';
+const APPLIED_HIDE_MODE_KEY = 'joblensAppliedHideMode';
 const APPLIED_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
 
 const normalize = (s) => s.trim().toLowerCase();
@@ -43,7 +44,7 @@ const setTab = (tab) => {
   });
   const sub = document.getElementById('header-sub');
   if (tab === 'applied') {
-    sub.textContent = 'Recently applied companies — hide them, or show with a yellow badge.';
+    sub.textContent = 'Control how applied jobs are hidden on LinkedIn.';
   } else {
     sub.textContent = 'Jobs from blocked companies are hidden on LinkedIn.';
   }
@@ -95,6 +96,53 @@ const renderBlocked = async () => {
     row.appendChild(removeBtn);
     container.appendChild(row);
   }
+
+  // Re-apply any live search filter so removing a company keeps the filter active
+  const inputEl = document.getElementById('add-input');
+  if (inputEl?.value.trim()) applyBlockedFilter(inputEl.value);
+};
+
+// ── Blocked list filter (debounced, fuzzy) ───────────────────────────────────
+
+// Subsequence fuzzy match: every char of q must appear in order in target.
+// Exact substring always wins first; fuzzy catches "amzn" → "amazon", etc.
+const fuzzyMatch = (q, target) => {
+  if (target.includes(q)) return true;
+  let qi = 0;
+  for (let i = 0; i < target.length && qi < q.length; i++) {
+    if (target[i] === q[qi]) qi++;
+  }
+  return qi === q.length;
+};
+
+let _filterTimer = null;
+
+const applyBlockedFilter = (raw) => {
+  const q = raw.trim().toLowerCase();
+  const rows = [...document.querySelectorAll('#blocked-list .company-row')];
+  const emptyState = document.getElementById('blocked-empty');
+  const footer = document.getElementById('blocked-footer');
+
+  if (rows.length === 0) return; // no list yet — let renderBlocked handle empty state
+
+  let visible = 0;
+  rows.forEach(row => {
+    const name = (row.querySelector('.company-name')?.textContent || '').toLowerCase();
+    const show = !q || fuzzyMatch(q, name);
+    row.style.display = show ? '' : 'none';
+    if (show) visible++;
+  });
+
+  if (visible === 0) {
+    emptyState.style.display = 'block';
+    emptyState.textContent = `No match for "${q}"`;
+    footer.textContent = '';
+  } else {
+    emptyState.style.display = 'none';
+    footer.textContent = q
+      ? `${visible} of ${rows.length} compan${rows.length === 1 ? 'y' : 'ies'} blocked`
+      : `${rows.length} compan${rows.length === 1 ? 'y' : 'ies'} blocked`;
+  }
 };
 
 const addBlockedCompany = async (raw) => {
@@ -134,8 +182,25 @@ const renderSyncMeta = async () => {
 
 const renderShowToggle = async () => {
   const stored = await getLocal([SHOW_APPLIED_KEY]);
-  const toggle = document.getElementById('show-applied-toggle');
-  toggle.checked = !!stored[SHOW_APPLIED_KEY];
+  document.getElementById('show-applied-toggle').checked = !!stored[SHOW_APPLIED_KEY];
+};
+
+const renderHideMode = async () => {
+  const stored = await getLocal([APPLIED_HIDE_MODE_KEY]);
+  const mode = stored[APPLIED_HIDE_MODE_KEY] === 'role' ? 'role' : 'company';
+  document.querySelectorAll('#hide-mode-seg .seg-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.mode === mode);
+  });
+  document.getElementById('hide-mode-desc').textContent = mode === 'role'
+    ? 'Hides exact applied roles; other roles at those companies stay visible'
+    : 'Hides all roles from companies you applied to';
+  const showBar = document.getElementById('show-applied-bar');
+  const showDesc = showBar && showBar.querySelector('.toggle-label span');
+  if (showDesc) {
+    showDesc.textContent = mode === 'role'
+      ? 'When on, exact applied roles stay visible with a red badge'
+      : 'When on, applied companies stay visible with an orange badge';
+  }
 };
 
 const renderApplied = async () => {
@@ -155,6 +220,7 @@ const renderApplied = async () => {
 
   Array.from(container.querySelectorAll('.company-row')).forEach((el) => el.remove());
   await renderShowToggle();
+  await renderHideMode();
 
   if (recent.length === 0) {
     emptyState.style.display = 'block';
@@ -247,6 +313,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (val) {
       addBlockedCompany(val);
       input.value = '';
+      applyBlockedFilter(''); // clear filter so the newly added company is visible
       input.focus();
     }
   });
@@ -255,10 +322,22 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.key === 'Enter') btn.click();
   });
 
+  input.addEventListener('input', () => {
+    clearTimeout(_filterTimer);
+    _filterTimer = setTimeout(() => applyBlockedFilter(input.value), 200);
+  });
+
   document.getElementById('sync-btn').addEventListener('click', syncNow);
 
   document.getElementById('show-applied-toggle').addEventListener('change', async (e) => {
     await setLocal({ [SHOW_APPLIED_KEY]: e.target.checked });
     await renderApplied();
+  });
+
+  document.querySelectorAll('#hide-mode-seg .seg-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      await setLocal({ [APPLIED_HIDE_MODE_KEY]: btn.dataset.mode });
+      await renderHideMode();
+    });
   });
 });

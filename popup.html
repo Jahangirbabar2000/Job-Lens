@@ -253,6 +253,28 @@
       color: #b42318;
     }
 
+    .seg-control {
+      display: flex;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .seg-btn {
+      padding: 4px 9px;
+      background: transparent;
+      border: none;
+      font-size: 11px;
+      font-weight: 600;
+      color: #6b7280;
+      cursor: pointer;
+      white-space: nowrap;
+      line-height: 1.4;
+    }
+    .seg-btn + .seg-btn { border-left: 1px solid #d1d5db; }
+    .seg-btn.active { background: #111827; color: #fff; }
+    .seg-btn:not(.active):hover { background: #f3f4f6; color: #111827; }
+
     .footer {
       padding: 8px 16px;
       border-top: 1px solid #e5e7eb;
@@ -285,15 +307,25 @@
   </div>
 
   <div class="panel" id="panel-applied">
-    <div class="toggle-bar">
+    <div class="toggle-bar" id="show-applied-bar">
       <div class="toggle-label">
         <strong>Show on LinkedIn</strong>
-        <span>When on, applied companies stay visible with a yellow badge</span>
+        <span id="show-applied-desc">When on, applied jobs stay visible with a badge instead of being hidden</span>
       </div>
-      <label class="toggle" title="Show applied companies on LinkedIn with a badge">
+      <label class="toggle" title="Show applied jobs on LinkedIn with a badge">
         <input type="checkbox" id="show-applied-toggle" />
         <span class="toggle-track"></span>
       </label>
+    </div>
+    <div class="toggle-bar">
+      <div class="toggle-label">
+        <strong>Scope</strong>
+        <span id="hide-mode-desc">Hiding all roles from applied companies</span>
+      </div>
+      <div class="seg-control" id="hide-mode-seg">
+        <button class="seg-btn active" data-mode="company">Company</button>
+        <button class="seg-btn" data-mode="role">Exact role</button>
+      </div>
     </div>
     <div class="sync-bar">
       <div class="sync-meta" id="sync-meta">Not synced yet</div>

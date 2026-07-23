@@ -5,7 +5,7 @@ const LAST_SYNC_KEY = 'joblensAppliedLastSyncAt';
 const LAST_SYNC_ERROR_KEY = 'joblensAppliedLastSyncError';
 const SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const ALARM_NAME = 'joblensAppliedDailySync';
-const TAILORR_URL = 'http://localhost:8001/applications/companies?days=90';
+const TAILORR_URL = 'http://localhost:8001/applications';
 
 const normalize = (name) => String(name || '').trim().toLowerCase();
 
@@ -44,18 +44,22 @@ async function maybeSyncApplied(opts = {}) {
       throw new Error('Unexpected response shape');
     }
 
-    const byName = new Map();
+    // Deduplicate by company+title. /applications returns full application rows
+    // with a `title` field and `created_at` as the date (applied_date is unused).
+    const byKey = new Map();
     for (const row of data) {
       const name = normalize(row.company);
       if (!name) continue;
-      const at = row.applied_at || null;
-      const prev = byName.get(name);
+      const at = row.created_at || null;
+      const title = normalize(row.title || '');
+      const key = `${name}|||${title}`;
+      const prev = byKey.get(key);
       if (!prev || (at && (!prev.at || at > prev.at))) {
-        byName.set(name, { name, at });
+        byKey.set(key, { name, at, title });
       }
     }
 
-    const list = Array.from(byName.values());
+    const list = Array.from(byKey.values());
     await setLocal({
       [APPLIED_KEY]: list,
       [LAST_SYNC_KEY]: now,

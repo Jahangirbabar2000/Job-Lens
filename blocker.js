@@ -4,6 +4,7 @@
   const STORAGE_KEY = 'joblensBlockedCompanies';
   const APPLIED_KEY = 'joblensAppliedCompanies';
   const SHOW_APPLIED_KEY = 'joblensShowApplied';
+  const APPLIED_HIDE_MODE_KEY = 'joblensAppliedHideMode'; // 'company' | 'role'
   const APPLIED_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
   const SEED = ['jack'];
 
@@ -54,19 +55,33 @@
       } catch { resolve([]); }
     });
 
-  /** Entries with applied_at within the last 90 days (normalized name list for matching). */
-  const getRecentAppliedNames = async () => {
+  /** Entries applied within the last 90 days, each with { name, title }. */
+  const getRecentApplied = async () => {
     const list = await getAppliedCompanies();
     const cutoff = Date.now() - APPLIED_WINDOW_MS;
-    const names = [];
+    const result = [];
     for (const entry of list) {
       if (!entry || !entry.name) continue;
       const at = entry.at ? new Date(entry.at).getTime() : NaN;
       if (!Number.isFinite(at) || at < cutoff) continue;
-      names.push(normalize(entry.name));
+      result.push({ name: normalize(entry.name), title: normalize(entry.title || '') });
     }
-    return names;
+    return result;
   };
+
+  const getRecentAppliedNames = async () => (await getRecentApplied()).map(e => e.name);
+
+  /** 'company' = hide all roles at applied companies (default). 'role' = hide only exact applied roles. */
+  const getAppliedHideMode = () =>
+    new Promise((resolve) => {
+      if (!isContextValid()) return resolve('company');
+      try {
+        chrome.storage.local.get([APPLIED_HIDE_MODE_KEY], (result) => {
+          if (chrome.runtime.lastError) return resolve('company');
+          resolve(result[APPLIED_HIDE_MODE_KEY] === 'role' ? 'role' : 'company');
+        });
+      } catch { resolve('company'); }
+    });
 
   /** When true, applied companies stay visible with a badge instead of being hidden. Default: hide. */
   const getShowApplied = () =>
@@ -80,14 +95,39 @@
       } catch { resolve(false); }
     });
 
-  const setAppliedBadge = (cardEl, show) => {
+  const setAppliedBadge = (cardEl, show, roleTitle) => {
     let badge = cardEl.querySelector('.joblens-applied-badge');
     if (show) {
       if (!badge) {
         badge = document.createElement('span');
+        cardEl.style.position = 'relative';
+        cardEl.appendChild(badge);
+      }
+      if (roleTitle) {
+        badge.className = 'joblens-applied-badge joblens-applied-badge--role';
+        badge.textContent = 'This role';
+        badge.title = `Applied for: ${roleTitle.charAt(0).toUpperCase() + roleTitle.slice(1)}`;
+      } else {
+        // Company mode: plain orange "Applied" badge
         badge.className = 'joblens-applied-badge';
         badge.textContent = 'Applied';
         badge.title = 'You applied to this company in the last 90 days';
+      }
+    } else if (badge) {
+      badge.remove();
+    }
+  };
+
+  // Blue badge for Role mode: company is in your applied list but this specific role isn't.
+  // Swaps with the ✕ button on card hover (see injectHoverButtons).
+  const setCoAppliedBadge = (cardEl, show) => {
+    let badge = cardEl.querySelector('.joblens-co-applied-badge');
+    if (show) {
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'joblens-co-applied-badge';
+        badge.textContent = 'Applied here';
+        badge.title = 'You applied to this company for a different role in the last 90 days';
         cardEl.style.position = 'relative';
         cardEl.appendChild(badge);
       }
@@ -184,6 +224,15 @@
     return null;
   };
 
+  const getJobTitleFromCard = (cardEl) => {
+    const dismissBtn = cardEl.querySelector('button[aria-label^="Dismiss "][aria-label$=" job"]');
+    if (!dismissBtn) return '';
+    return normalize(
+      dismissBtn.getAttribute('aria-label')
+        .replace(/^Dismiss\s+/i, '').replace(/\s+job$/i, '').trim()
+    );
+  };
+
   // Hide the data-display-contents wrapper so the following <hr> gap also disappears
   const getHideTarget = (cardEl) => {
     const parent = cardEl.parentElement;
@@ -192,25 +241,68 @@
   };
 
   // ── Apply blocklist + applied list to all visible cards ─────────────────────
+  //
+  // Company mode: hides all cards from applied companies.
+  //   "Show on LinkedIn" ON → show them instead with an orange "Applied" badge.
+  //
+  // Role mode: never hides anything. Always shows two distinct badges:
+  //   • Red pill with role name  → you applied for this exact role here
+  //   • Yellow "Applied here"    → you applied to this company for a different role
+  //   ("Show on LinkedIn" toggle is irrelevant in Role mode — always visible.)
 
   const applyToCards = async () => {
-    const [blocklist, appliedNames, showApplied] = await Promise.all([
+    const [blocklist, appliedEntries, hideMode, showApplied] = await Promise.all([
       getBlocklist(),
-      getRecentAppliedNames(),
+      getRecentApplied(),
+      getAppliedHideMode(),
       getShowApplied(),
     ]);
+    const appliedNames = appliedEntries.map(e => e.name);
+
     const cards = getAllCards();
     for (const card of cards) {
       const company = getCompanyFromCard(card);
       if (!company) continue;
-      const key = normalize(company);
-      const blocked = matchesList(key, blocklist);
-      const applied = !blocked && matchesList(key, appliedNames);
+      const companyKey = normalize(company);
+      const blocked = matchesList(companyKey, blocklist);
+
+      let hideCard = false;
+      let orangeBadge = false;
+      let roleChipTitle = '';
+      let yellowBadge = false;
+
+      if (!blocked) {
+        if (hideMode === 'company') {
+          const isApplied = matchesList(companyKey, appliedNames);
+          if (isApplied) {
+            hideCard = !showApplied;
+            orangeBadge = showApplied;
+          }
+        } else {
+          // Role mode: hide only the exact role applied for; badge other roles at the same company
+          const isCompanyApplied = matchesList(companyKey, appliedNames);
+          if (isCompanyApplied) {
+            const cardTitle = getJobTitleFromCard(card);
+            const matchedEntry = appliedEntries.find(e =>
+              matchesList(companyKey, [e.name]) &&
+              e.title && cardTitle &&
+              (cardTitle.includes(e.title) || e.title.includes(cardTitle))
+            );
+            if (matchedEntry) {
+              hideCard = !showApplied;
+              roleChipTitle = showApplied ? matchedEntry.title : '';
+            } else {
+              yellowBadge = true;
+            }
+          }
+        }
+      }
+
       const target = getHideTarget(card);
       target.classList.toggle('joblens-blocked-card', blocked);
-      // Hide when applied unless the user opted to show them with a badge
-      target.classList.toggle('joblens-applied-card', applied && !showApplied);
-      setAppliedBadge(card, applied && showApplied);
+      target.classList.toggle('joblens-applied-card', hideCard);
+      setAppliedBadge(card, orangeBadge || !!roleChipTitle, roleChipTitle);
+      setCoAppliedBadge(card, yellowBadge);
     }
   };
 
@@ -250,10 +342,19 @@
         btn.style.background = '#1e7f34';
       }, true);
 
-      // CSS :hover can't target these cards (no stable parent class), so use JS events
-      card.addEventListener('mouseenter', () => { btn.style.display = 'flex'; });
+      // CSS :hover can't target these cards (no stable parent class), so use JS events.
+      // All bottom-right badges swap with the ✕ button on hover.
+      const hideBadges = () => {
+        card.querySelectorAll('.joblens-applied-badge, .joblens-co-applied-badge')
+          .forEach(b => { b.style.visibility = 'hidden'; });
+      };
+      const showBadges = () => {
+        card.querySelectorAll('.joblens-applied-badge, .joblens-co-applied-badge')
+          .forEach(b => { b.style.visibility = ''; });
+      };
+      card.addEventListener('mouseenter', () => { hideBadges(); btn.style.display = 'flex'; });
       card.addEventListener('mouseleave', () => {
-        if (btn.textContent !== '✓') btn.style.display = 'none';
+        if (btn.textContent !== '✓') { btn.style.display = 'none'; showBadges(); }
       });
 
       card.appendChild(btn);
@@ -288,7 +389,7 @@
     try {
       chrome.storage.onChanged.addListener((changes, area) => {
         if (area !== 'local') return;
-        if (changes[STORAGE_KEY] || changes[APPLIED_KEY] || changes[SHOW_APPLIED_KEY]) {
+        if (changes[STORAGE_KEY] || changes[APPLIED_KEY] || changes[SHOW_APPLIED_KEY] || changes[APPLIED_HIDE_MODE_KEY]) {
           applyToCards();
         }
       });
@@ -316,7 +417,9 @@
   window.JobLensBlocker = {
     getBlocklist,
     getAppliedCompanies,
+    getRecentApplied,
     getRecentAppliedNames,
+    getAppliedHideMode,
     addCompany,
     removeCompany,
     isBlocked,
