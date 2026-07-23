@@ -683,6 +683,7 @@
 
   const SPONSORSHIP_STRONG_NEGATIVE = [
     /\bU\.?S\.?\s+citizens?\s+only\b/i,
+    /\bonly\s+U\.?S\.?\s+citizens?\b/i,
     /\bU\.?S\.?\s+citizenship\s+required\b/i,
     /\bmust\s+be\s+(a\s+)?U\.?S\.?\s+citizen\b/i,
     /\bmust\s+be\s+(a\s+)?United\s+States\s+citizen\b/i,
@@ -762,7 +763,7 @@
     /\bU\.?S\.?\s+citizens?[^.]{0,40}only\b/i,
     /\bGC\s+holders?\b/i,
     /\bgreen\s+card\s+holders?\s+only\b/i,
-    /\bcitizens?\s+or\s+(?:GC|green\s+card)\s+holders?\b/i,
+    /\bcitizens?\s+(?:and|or|&|\/)\s+(?:GC|green\s+card)(?:\s+holders?)?\b/i,
     /\bdo\s+not\s+offer\s+(?:any\s+)?(?:visa\s+)?sponsorship\b/i,
     /\bdoes\s+not\s+offer\s+(?:any\s+)?(?:visa\s+)?sponsorship\b/i,
     /\bnot\s+consider\s+candidates\s+who\s+need\s+sponsorship\b/i,
