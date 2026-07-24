@@ -6,7 +6,6 @@
   const SHOW_APPLIED_KEY = 'joblensShowApplied';
   const APPLIED_HIDE_MODE_KEY = 'joblensAppliedHideMode'; // 'company' | 'role'
   const APPLIED_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
-  const SEED = ['jack'];
 
   // ── Context guard ────────────────────────────────────────────────────────────
   // After the extension is reloaded, old content scripts lose their chrome API
@@ -27,12 +26,7 @@
       try {
         chrome.storage.local.get([STORAGE_KEY], (result) => {
           if (chrome.runtime.lastError) return resolve([]);
-          if (result[STORAGE_KEY] === undefined) {
-            // First run — seed the list
-            chrome.storage.local.set({ [STORAGE_KEY]: SEED }, () => resolve([...SEED]));
-          } else {
-            resolve(result[STORAGE_KEY]);
-          }
+          resolve(Array.isArray(result[STORAGE_KEY]) ? result[STORAGE_KEY] : []);
         });
       } catch { resolve([]); }
     });
@@ -155,7 +149,7 @@
     applyToCards();
   };
 
-  // Partial match: stored "jack" will block "Jack & Jill Inc"; "google" blocks "Google LLC"
+  // Partial match: stored "google" will block "Google LLC"; "acme" blocks "Acme Corp"
   const matchesList = (key, list) =>
     list.some((c) => key.includes(c) || c.includes(key));
 
