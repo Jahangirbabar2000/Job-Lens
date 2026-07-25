@@ -155,9 +155,16 @@
     applyToCards();
   };
 
-  // Partial match: stored "jack" will block "Jack & Jill Inc"; "google" blocks "Google LLC"
+  // Whole-word match: stored "jack" blocks "Jack & Jill Inc"; "google" blocks
+  // "Google LLC" — but "exa" (applied to Exa) must NOT match "Exacare AI".
+  // Boundaries are non-alphanumeric so "AT&T"/"J&J" still work; metachars escaped.
+  const wordInName = (haystack, needle) => {
+    if (!needle) return false;
+    const esc = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(?:^|[^a-z0-9])${esc}(?:[^a-z0-9]|$)`, 'i').test(haystack);
+  };
   const matchesList = (key, list) =>
-    list.some((c) => key.includes(c) || c.includes(key));
+    list.some((c) => wordInName(key, c) || wordInName(c, key));
 
   const isBlocked = async (name) => {
     const key = normalize(name);

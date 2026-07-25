@@ -14,9 +14,15 @@
 
   const normalize = (s) => (s || '').trim().toLowerCase();
   const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
-  // Partial match: stored "google" matches "Google LLC" and vice-versa.
+  // Whole-word match: "google" matches "Google LLC", but "exa" must NOT match
+  // "Exacare AI". Non-alphanumeric boundaries; metachars escaped.
+  const wordInName = (haystack, needle) => {
+    if (!needle) return false;
+    const esc = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(?:^|[^a-z0-9])${esc}(?:[^a-z0-9]|$)`, 'i').test(haystack);
+  };
   const matchesList = (key, list) =>
-    list.some((c) => c && (key.includes(c) || c.includes(key)));
+    list.some((c) => c && (wordInName(key, c) || wordInName(c, key)));
 
   // Only act on an actual company profile, not /company/setup, /company/ (list), etc.
   const isCompanyProfile = () =>
