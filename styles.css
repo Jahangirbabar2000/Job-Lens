@@ -179,6 +179,22 @@
   cursor: default;
 }
 
+/* "Block company" toggle on company profile pages — pinned to the top-right of the name block */
+.joblens-company-block-btn {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: inline-flex;
+  padding: 5px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  z-index: 2;
+  transition: background 0.15s, color 0.15s;
+}
+.joblens-company-block-btn.joblens-chip--blocked-confirm {
+  cursor: pointer;
+}
+
 /* Hidden blocked cards in left panel */
 .joblens-blocked-card,
 .joblens-applied-card {

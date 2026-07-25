@@ -739,6 +739,14 @@
     /\b(?:able|ability)\s+to\s+(?:obtain|maintain|obtain\/maintain)\s+(?:an?\s+)?(?:active\s+)?(?:Secret\s+|Top\s+Secret\s+)?(?:U\.?S\.?\s+)?(?:security\s+)?clearance\b/i,
     /\bclearance\s+eligible\b/i,
     /\bsecurity\s+clearance\s+eligible\b/i,
+    // "Active Q or TS-eligible security clearance" — qualifier words between
+    // "active" and "clearance" break the tighter patterns above.
+    /\bactive\b[^.\n]{0,40}\bsecurity\s+clearance\b/i,
+    // Clearance-level shorthand: "TS-eligible", "Q eligible", "Secret-eligible".
+    /\b(?:TS|Q|Secret|Top\s+Secret)[-\s]?eligible\b/i,
+    // DOE "Q" and standalone "TS" clearances — both require U.S. citizenship.
+    /\bQ\s+clearance\b/i,
+    /\bTS\s+clearance\b/i,
     /\bsecurity\s+clearances?\s+may\s+only\s+be\s+granted\s+to\s+U\.?S\.?\s+citizens?\b/i,
     /\bclearance.*may\s+only\s+be\s+granted\s+to\s+U\.?S\.?\s+citizens?\b/i,
     /\brequires.*government\s+security\s+clearance\b/i,

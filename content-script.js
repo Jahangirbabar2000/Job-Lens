@@ -299,19 +299,45 @@
         return link ? link.closest("p") : null;
       },
       () => {
-        // Direct job view (new layout, no data-sdui-screen wrapper)
-        // Title is a short <p> immediately before the location string (which contains "·")
-        const descEl = document.querySelector('[data-testid="expandable-text-box"]');
-        if (!descEl) return null;
-        const allP = Array.from(document.querySelectorAll('p'));
-        const descP = descEl.closest('p');
-        const descIdx = descP ? allP.indexOf(descP) : allP.length;
-        return allP.slice(0, descIdx).reverse().find(p => {
+        // Direct job view (new SDUI layout, no data-sdui-screen wrapper).
+        // The job title is the short <p> immediately ABOVE the top-card meta
+        // line ("<location> · <recency> · <N> clicked apply"). We anchor to that
+        // meta line instead of the description, because async-loaded sections
+        // like "People you can reach out to" (peopleWhoCanHelp) sit just above
+        // the description and their paragraphs otherwise won the reverse scan —
+        // landing the chips in the wrong block.
+        const isTitleP = (p) => {
+          if (!p || p.closest('a')) return false;
+          // Never treat a paragraph from a non-top-card section as the title.
+          if (p.closest('[data-sdui-component*="peopleWhoCanHelp"]')) return false;
           const text = (p.childNodes[0]?.textContent || '').trim();
           return text.length >= 3 && text.length <= 120 &&
-                 !text.includes('·') && !text.includes('$') && !text.includes('@') &&
-                 !p.closest('a');
-        }) || null;
+                 !text.includes('·') && !text.includes('$') && !text.includes('@');
+        };
+
+        const descEl = document.querySelector('[data-testid="expandable-text-box"]');
+        const allP = Array.from(document.querySelectorAll('p'));
+        const descP = descEl ? descEl.closest('p') : null;
+        const descIdx = descP ? allP.indexOf(descP) : allP.length;
+        const head = allP.slice(0, descIdx);
+
+        // Meta/location line: middot separators plus a recency/applicant signal.
+        const metaIdx = head.findIndex(p => {
+          const t = p.innerText.trim();
+          return t.includes('·') && t.length <= 160 &&
+            (/\d+\s*(second|minute|hour|day|week|month|year)s?\s*ago/i.test(t) ||
+             /clicked apply|applicants?|reposted|promoted/i.test(t));
+        });
+
+        if (metaIdx > 0) {
+          for (let i = metaIdx - 1; i >= 0; i--) {
+            if (isTitleP(head[i])) return head[i];
+          }
+        }
+
+        // Fallback: last qualifying <p> before the description (original
+        // behaviour), still excluding the non-top-card sections.
+        return head.reverse().find(isTitleP) || null;
       }
     ]);
 
