@@ -144,6 +144,7 @@
       list.push(key);
       await saveBlocklist(list);
     }
+    invalidateSettings();
     applyToCards();
   };
 
@@ -152,6 +153,7 @@
     const list = await getBlocklist();
     const updated = list.filter((c) => c !== key);
     await saveBlocklist(updated);
+    invalidateSettings();
     applyToCards();
   };
 
@@ -257,18 +259,59 @@
   //   • Yellow "Applied here"    → you applied to this company for a different role
   //   ("Show on LinkedIn" toggle is irrelevant in Role mode — always visible.)
 
-  const applyToCards = async () => {
+  // applyToCards runs on every mutation batch. Four async storage round-trips per
+  // run is four per ~300ms on a page LinkedIn mutates constantly; cache them and
+  // let watchStorage() invalidate. Every writer goes through chrome.storage.local,
+  // so the onChanged listener sees every change.
+  let _settings = null;
+  const invalidateSettings = () => { _settings = null; };
+
+  const getSettings = async () => {
+    if (_settings) return _settings;
     const [blocklist, appliedEntries, hideMode, showApplied] = await Promise.all([
       getBlocklist(),
       getRecentApplied(),
       getAppliedHideMode(),
       getShowApplied(),
     ]);
-    const appliedNames = appliedEntries.map(e => e.name);
+    _settings = {
+      blocklist,
+      appliedEntries,
+      appliedNames: appliedEntries.map(e => e.name),
+      hideMode,
+      showApplied,
+    };
+    return _settings;
+  };
+
+  // getCompanyFromCard reads p.innerText, which forces a synchronous layout flush
+  // per paragraph. Across ~25 cards on every mutation batch that was the single
+  // largest cost on the search page. Cache per card element, keyed on the Dismiss
+  // button's aria-label so a recycled card (React reuses DOM nodes when the list
+  // re-renders) is recomputed rather than serving a stale company name.
+  const _cardInfo = new WeakMap();
+
+  const getCardInfo = (cardEl) => {
+    const dismissBtn = cardEl.querySelector('button[aria-label^="Dismiss "][aria-label$=" job"]');
+    const key = dismissBtn ? dismissBtn.getAttribute('aria-label') : '';
+    const cached = _cardInfo.get(cardEl);
+    if (cached && cached.key === key) return cached;
+
+    const info = {
+      key,
+      company: getCompanyFromCard(cardEl),
+      title: getJobTitleFromCard(cardEl),
+    };
+    _cardInfo.set(cardEl, info);
+    return info;
+  };
+
+  const applyToCards = async () => {
+    const { blocklist, appliedEntries, appliedNames, hideMode, showApplied } = await getSettings();
 
     const cards = getAllCards();
     for (const card of cards) {
-      const company = getCompanyFromCard(card);
+      const { company, title: cardTitle } = getCardInfo(card);
       if (!company) continue;
       const companyKey = normalize(company);
       const blocked = matchesList(companyKey, blocklist);
@@ -289,7 +332,6 @@
           // Role mode: hide only the exact role applied for; badge other roles at the same company
           const isCompanyApplied = matchesList(companyKey, appliedNames);
           if (isCompanyApplied) {
-            const cardTitle = getJobTitleFromCard(card);
             const matchedEntry = appliedEntries.find(e =>
               matchesList(companyKey, [e.name]) &&
               e.title && cardTitle &&
@@ -342,7 +384,7 @@
         e.stopPropagation();
         e.stopImmediatePropagation();
         e.preventDefault();
-        const company = getCompanyFromCard(card);
+        const company = getCardInfo(card).company;
         if (!company) return;
         await addCompany(company);
         btn.textContent = '✓';
@@ -370,9 +412,26 @@
 
   // ── Observe the job list for new cards ───────────────────────────────────────
 
+  // Nodes we injected ourselves. Reacting to our own badge/button writes turned
+  // every pass into another scheduled pass.
+  const isOwnNode = (node) => {
+    if (node.nodeType !== 1) return false;
+    const cls = node.getAttribute && node.getAttribute('class');
+    return typeof cls === 'string' && (cls.includes('joblens-') || cls.includes('h1b-'));
+  };
+
+  const isRelevant = (mutations) => {
+    for (const m of mutations) {
+      for (const n of m.addedNodes) if (!isOwnNode(n)) return true;
+      for (const n of m.removedNodes) if (!isOwnNode(n)) return true;
+    }
+    return false;
+  };
+
   const observeJobList = () => {
     let debounce;
-    const observer = new MutationObserver(() => {
+    const observer = new MutationObserver((mutations) => {
+      if (!isRelevant(mutations)) return;
       clearTimeout(debounce);
       debounce = setTimeout(() => {
         applyToCards();
@@ -397,6 +456,7 @@
       chrome.storage.onChanged.addListener((changes, area) => {
         if (area !== 'local') return;
         if (changes[STORAGE_KEY] || changes[APPLIED_KEY] || changes[SHOW_APPLIED_KEY] || changes[APPLIED_HIDE_MODE_KEY]) {
+          invalidateSettings();
           applyToCards();
         }
       });

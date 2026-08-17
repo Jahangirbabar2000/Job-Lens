@@ -1,17 +1,21 @@
 .joblens-chip-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 6px;
+  gap: 8px;
+  margin: 8px 0;
   align-items: center;
+  /* Claim the full line even if we land in a wrapping flex row, so the chips
+     never sit beside the job title and compete with it. */
+  width: 100%;
+  flex-basis: 100%;
 }
 
 .joblens-chip {
-  padding: 2px 8px;
+  padding: 3px 10px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  line-height: 1.4;
+  line-height: 1.5;
   display: inline-flex;
   align-items: center;
   border: 1px solid transparent;
@@ -124,25 +128,6 @@
   padding: 0 2px;
 }
 
-/* Applied-status chips — mirror the "Applied" tab badge colors */
-.joblens-chip--applied {
-  background: #f5a623;
-  color: #1a1200;
-  border-color: #d4890a;
-}
-
-.joblens-chip--applied-role {
-  background: #b42318;
-  color: #ffffff;
-  border-color: #7a1208;
-}
-
-.joblens-chip--co-applied {
-  background: #fef9c3;
-  color: #78350f;
-  border-color: #fde68a;
-}
-
 .joblens-chip--language {
   background: #f1f5f9;
   color: #334155;
@@ -154,6 +139,100 @@
   color: #fde68a !important;
   border-radius: 2px;
   padding: 0 2px;
+}
+
+/* ── Dark mode ───────────────────────────────────────────────────────────────
+   All the fills above are light-mode pastels. On LinkedIn's dark theme they
+   read as bright stickers that outweigh the job title next to them. Dark mode
+   wants tonal variants, not inverted ones: a low-opacity tint of the hue for
+   the fill, a lighter tint of the same hue for the label. Every pair below
+   clears 4.5:1 against LinkedIn's dark surface.
+
+   LinkedIn sets data-color-scheme on <body>; prefers-color-scheme is the
+   fallback for when the member follows their OS setting. */
+
+body[data-color-scheme="dark"] .joblens-chip--unknown {
+  background: rgba(148, 163, 184, 0.16);
+  color: #cbd5e1;
+  border-color: rgba(148, 163, 184, 0.38);
+}
+body[data-color-scheme="dark"] .joblens-chip--software,
+body[data-color-scheme="dark"] .joblens-chip--applicants-low,
+body[data-color-scheme="dark"] .joblens-chip--blocked-confirm {
+  background: rgba(52, 211, 153, 0.16);
+  color: #6ee7b7;
+  border-color: rgba(52, 211, 153, 0.38);
+}
+body[data-color-scheme="dark"] .joblens-chip--not-software,
+body[data-color-scheme="dark"] .joblens-chip--sponsorship-no,
+body[data-color-scheme="dark"] .joblens-chip--applicants-very-high,
+body[data-color-scheme="dark"] .joblens-chip--block {
+  background: rgba(248, 113, 113, 0.16);
+  color: #fca5a5;
+  border-color: rgba(248, 113, 113, 0.38);
+}
+body[data-color-scheme="dark"] .joblens-chip--applicants-extreme {
+  background: rgba(248, 113, 113, 0.24);
+  color: #fecaca;
+  border-color: rgba(248, 113, 113, 0.55);
+}
+body[data-color-scheme="dark"] .joblens-chip--unclear,
+body[data-color-scheme="dark"] .joblens-chip--applicants-medium {
+  background: rgba(251, 191, 36, 0.16);
+  color: #fcd34d;
+  border-color: rgba(251, 191, 36, 0.38);
+}
+body[data-color-scheme="dark"] .joblens-chip--applicants-high {
+  background: rgba(251, 146, 60, 0.16);
+  color: #fdba74;
+  border-color: rgba(251, 146, 60, 0.38);
+}
+body[data-color-scheme="dark"] .joblens-chip--experience {
+  background: rgba(167, 139, 250, 0.16);
+  color: #c4b5fd;
+  border-color: rgba(167, 139, 250, 0.38);
+}
+body[data-color-scheme="dark"] .joblens-chip--sponsorship-yes {
+  background: rgba(45, 212, 191, 0.16);
+  color: #5eead4;
+  border-color: rgba(45, 212, 191, 0.38);
+}
+body[data-color-scheme="dark"] .joblens-chip--compensation {
+  background: rgba(56, 189, 248, 0.16);
+  color: #7dd3fc;
+  border-color: rgba(56, 189, 248, 0.38);
+}
+body[data-color-scheme="dark"] .joblens-chip--language {
+  background: rgba(148, 163, 184, 0.16);
+  color: #e2e8f0;
+  border-color: rgba(148, 163, 184, 0.38);
+}
+body[data-color-scheme="dark"] .joblens-chip--block:hover {
+  background: rgba(248, 113, 113, 0.3);
+  color: #fecaca;
+}
+
+/* Highlight spans inside the description: keep the same hue, drop the opaque
+   fill so the JD stays readable underneath. */
+body[data-color-scheme="dark"] .h1b-sponsor-highlight {
+  background-color: rgba(248, 113, 113, 0.22);
+  color: #fecaca !important;
+}
+body[data-color-scheme="dark"] .h1b-sponsor-highlight-positive {
+  background-color: rgba(52, 211, 153, 0.22);
+  color: #bbf7d0 !important;
+}
+body[data-color-scheme="dark"] .h1b-experience-highlight {
+  background-color: rgba(167, 139, 250, 0.22);
+  color: #e9d5ff !important;
+}
+body[data-color-scheme="dark"] .joblens-compensation-highlight {
+  background-color: rgba(56, 189, 248, 0.22);
+  color: #bfdbfe !important;
+}
+body[data-color-scheme="dark"] .joblens-language-highlight {
+  background-color: rgba(251, 191, 36, 0.22);
+  color: #fde68a !important;
 }
 
 /* ── Blocker ─────────────────────────────────────────────────────────────── */

@@ -1,31 +1,34 @@
 (function () {
+  // Build marker on <html>. Content scripts run in an isolated world, so their
+  // globals are invisible from the DevTools console — this attribute is the one
+  // reliable way to confirm from the page which build is actually live.
+  document.documentElement.setAttribute("data-joblens", "loaded");
+
   const CHIP_ROW_ID = "joblens-chip-row";
   const CHIP_ID = "joblens-chip"; // kept for future re-enable
   const APPLICANT_CHIP_ID = "joblens-applicant-chip";
   const EXPERIENCE_CHIP_ID = "joblens-experience-chip";
   const COMPENSATION_CHIP_ID = "joblens-compensation-chip";
   const SPONSORSHIP_CHIP_ID = "joblens-sponsorship-chip";
-  const APPLIED_CHIP_ID = "joblens-applied-status-chip";
 
-  // Mirror of blocker.js helpers (content scripts share a page but not scope).
-  const normalize = (s) => (s || "").trim().toLowerCase();
-  // Whole-word match: "google" matches "Google LLC", but "exa" (applied to Exa)
-  // must NOT match "Exacare AI". Non-alphanumeric boundaries; metachars escaped.
-  const wordInName = (haystack, needle) => {
-    if (!needle) return false;
-    const esc = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return new RegExp(`(?:^|[^a-z0-9])${esc}(?:[^a-z0-9]|$)`, "i").test(haystack);
-  };
-  const matchesList = (key, list) =>
-    list.some((c) => c && (wordInName(key, c) || wordInName(c, key)));
+  const findFirst = (selectors) =>
+    selectors
+      .map((s) => (typeof s === "function" ? s() : document.querySelector(s)))
+      .find(Boolean) || null;
 
+  // Check synchronously before arming the poll. The old version only looked
+  // inside setInterval, so every call paid a full tick even when the element was
+  // already on the page — which is the common case, since we are usually invoked
+  // from a mutation that just added it.
+  const POLL_MS = 80;
   const waitForElement = (selectors, timeoutMs = 10000) => {
+    const immediate = findFirst(selectors);
+    if (immediate) return Promise.resolve(immediate);
+
     return new Promise((resolve) => {
       const start = Date.now();
       const timer = setInterval(() => {
-        const element = selectors
-          .map((s) => (typeof s === "function" ? s() : document.querySelector(s)))
-          .find(Boolean);
+        const element = findFirst(selectors);
         if (element) {
           clearInterval(timer);
           resolve(element);
@@ -35,19 +38,50 @@
           clearInterval(timer);
           resolve(null);
         }
-      }, 300);
+      }, POLL_MS);
     });
   };
 
+  const DESCRIPTION_SELECTORS = [
+    ".jobs-description__content",
+    ".jobs-description-content__text",
+    ".show-more-less-html__markup",
+    ".jobs-box__html-content",
+    '[data-testid="expandable-text-box"]',
+    ".jobs-description",
+  ];
+
+  // Return the first candidate that actually holds text. Two traps here, both of
+  // which made this give up while the description was plainly on screen:
+  // a selector can match several elements (the job description AND the company
+  // "About" box), and innerText is "" for anything the browser hasn't laid out
+  // yet — LinkedIn's lazy columns and collapsed sections hit that constantly.
+  // textContent still has the copy in that case.
+  const getDescriptionEl = () => {
+    for (const selector of DESCRIPTION_SELECTORS) {
+      for (const el of document.querySelectorAll(selector)) {
+        if (((el.innerText || el.textContent) || "").trim()) return el;
+      }
+    }
+    return null;
+  };
+
   const getJobDescriptionText = () => {
-    const descriptionEl =
-      document.querySelector(".jobs-description__content") ||
-      document.querySelector(".jobs-description-content__text") ||
-      document.querySelector(".show-more-less-html__markup") ||
-      document.querySelector(".jobs-box__html-content") ||
-      document.querySelector('[data-testid="expandable-text-box"]') ||
-      document.querySelector(".jobs-description");
-    return descriptionEl ? descriptionEl.innerText.trim() : "";
+    const el = getDescriptionEl();
+    if (!el) return "";
+    return ((el.innerText || el.textContent) || "").trim();
+  };
+
+  // The right-hand job-details column. Everything that identifies the current
+  // job — title, meta line, description — lives inside it. Scoping matters: the
+  // left results panel comes first in the DOM, so a document-wide scan reaches
+  // the job cards before the detail pane and anchors on the wrong paragraph.
+  const getDetailPaneRoot = () => {
+    const descEl = getDescriptionEl();
+    if (!descEl) return null;
+    return descEl.closest('[data-testid="lazy-column"]') ||
+           descEl.closest(".jobs-search__job-details") ||
+           null;
   };
 
   const buildTooltip = (classification) => {
@@ -75,23 +109,45 @@
     return { text: "Unclear Role", className: "joblens-chip--unclear" };
   };
 
-  const getApplicantCount = () => {
+  // Containers worth scanning for the applicant number. This used to fall back to
+  // document.body, so every observer tick walked every <p> and <span> on the page —
+  // thousands of nodes, several times a second. Scope it to the premium insights
+  // block and the top card instead.
+  const getApplicantScanRoots = (titleEl) => {
+    const roots = [];
+    const premium = document.querySelector('[id^="JobDetails_PremiumApplicantInsights"]');
+    if (premium) roots.push(premium);
+    const sdui = document.querySelector('[data-sdui-screen*="SemanticJobDetails"]');
+    if (sdui) roots.push(sdui);
+    if (titleEl) {
+      // The meta line ("<location> · <recency> · <N> applicants") sits a few levels
+      // above the title; three levels keeps the scan inside the top card.
+      let top = titleEl;
+      for (let i = 0; i < 3 && top.parentElement; i++) top = top.parentElement;
+      roots.push(top);
+    }
+    return roots.length ? roots : [document.body];
+  };
+
+  const getApplicantCount = (titleEl) => {
     // Old layout
     const el = document.querySelector(".jobs-premium-applicant-insights__list-num");
     if (el) return el.textContent.trim();
 
-    const panel = document.querySelector('[data-sdui-screen*="SemanticJobDetails"]') || document.body;
+    const roots = getApplicantScanRoots(titleEl);
 
     // New layout pattern B first: premium section <span>NUMBER</span> + sibling label (most accurate)
     // Label text varies: "total", "Applicants", etc.
     const APPLICANT_LABELS = /^(total|applicants?)$/i;
-    for (const labelEl of panel.querySelectorAll("p, span")) {
-      if (labelEl.children.length === 0 && APPLICANT_LABELS.test(labelEl.textContent.trim())) {
-        const parent = labelEl.parentElement;
-        if (parent) {
-          for (const numEl of parent.querySelectorAll("span")) {
-            if (numEl.children.length === 0 && /^\d[\d,]*$/.test(numEl.textContent.trim())) {
-              return numEl.textContent.trim().replace(/,/g, "");
+    for (const root of roots) {
+      for (const labelEl of root.querySelectorAll("p, span")) {
+        if (labelEl.children.length === 0 && APPLICANT_LABELS.test(labelEl.textContent.trim())) {
+          const parent = labelEl.parentElement;
+          if (parent) {
+            for (const numEl of parent.querySelectorAll("span")) {
+              if (numEl.children.length === 0 && /^\d[\d,]*$/.test(numEl.textContent.trim())) {
+                return numEl.textContent.trim().replace(/,/g, "");
+              }
             }
           }
         }
@@ -100,10 +156,12 @@
 
     // New layout pattern A fallback: header summary text
     // e.g. "Over 100 people clicked apply", "Over 100 applicants", "69 people clicked apply"
-    for (const node of panel.querySelectorAll("span, p")) {
-      if (node.children.length === 0) {
-        const m = node.textContent.trim().match(/^(?:over\s+)?(\d[\d,]*)\+?\s+(?:people\s+clicked\s+apply|applicants?)$/i);
-        if (m) return m[1].replace(/,/g, "");
+    for (const root of roots) {
+      for (const node of root.querySelectorAll("span, p")) {
+        if (node.children.length === 0) {
+          const m = node.textContent.trim().match(/^(?:over\s+)?(\d[\d,]*)\+?\s+(?:people\s+clicked\s+apply|applicants?)$/i);
+          if (m) return m[1].replace(/,/g, "");
+        }
       }
     }
 
@@ -179,83 +237,28 @@
       makeChip(`joblens-lang-chip-${i}`, "joblens-chip--language", lang.name)
     );
 
-  // Company name on the job-view page. LinkedIn rotates class names, so try the
-  // known top-card selectors first, then fall back to the /company/ link nearest
-  // the job title (stable across the new obfuscated layouts).
-  const getCompanyName = (titleEl) => {
-    const clean = (s) => (s || "").replace(/\s+/g, " ").trim();
-
-    for (const sel of [
-      ".job-details-jobs-unified-top-card__company-name a",
-      ".job-details-jobs-unified-top-card__company-name",
-      ".jobs-unified-top-card__company-name a",
-      ".jobs-unified-top-card__company-name",
-    ]) {
-      const el = document.querySelector(sel);
-      const t = clean(el && el.innerText);
-      if (t) return t;
+  // Where to drop the chip row so it gets its own line under the title.
+  // The title sits inside a chain of display:contents wrappers and a
+  // row-direction flex container; inserting next to it there makes the row
+  // just another flex item, so the chips land beside the heading and fight it
+  // for attention. Climb until we reach a node whose parent stacks its
+  // children vertically, and insert after that.
+  const getRowAnchor = (titleEl) => {
+    let node = titleEl;
+    for (let i = 0; i < 6 && node.parentElement; i++) {
+      const cs = getComputedStyle(node.parentElement);
+      const stacksVertically =
+        cs.display === "block" ||
+        cs.display === "grid" ||
+        ((cs.display === "flex" || cs.display === "inline-flex") &&
+          cs.flexDirection.startsWith("column"));
+      if (stacksVertically) return node;
+      node = node.parentElement;
     }
-
-    if (titleEl) {
-      const tRect = titleEl.getBoundingClientRect();
-      let best = null, bestDist = Infinity;
-      for (const a of document.querySelectorAll('a[href*="/company/"]')) {
-        const t = clean(a.innerText);
-        if (!t || t.length > 100) continue;
-        const r = a.getBoundingClientRect();
-        if (r.width === 0 && r.height === 0) continue;
-        const dist = Math.abs(r.top - tRect.top);
-        if (dist < bestDist) { bestDist = dist; best = t; }
-      }
-      if (best) return best;
-    }
-
-    const anyLink = document.querySelector('a[href*="/company/"]');
-    return clean(anyLink && anyLink.innerText) || null;
+    return node;
   };
 
-  // Applied-status chip — shown ONLY when you've applied to this company (or this
-  // exact company/role) within the last 90 days. Matches the "Applied" tab styling:
-  //   company mode → orange "Applied"
-  //   role mode    → red "Applied · This role"  OR  yellow "Applied here"
-  const buildAppliedChip = async (companyName, jobTitle) => {
-    const B = window.JobLensBlocker;
-    if (!B || !companyName) return null;
-
-    let appliedEntries = [];
-    let hideMode = "company";
-    try {
-      [appliedEntries, hideMode] = await Promise.all([
-        B.getRecentApplied(),
-        B.getAppliedHideMode(),
-      ]);
-    } catch { return null; }
-    if (!appliedEntries.length) return null;
-
-    const companyKey = normalize(companyName);
-    const appliedNames = appliedEntries.map((e) => e.name);
-    if (!matchesList(companyKey, appliedNames)) return null; // not applied → no chip
-
-    if (hideMode === "role") {
-      const titleKey = normalize(jobTitle);
-      const roleMatch = appliedEntries.find((e) =>
-        matchesList(companyKey, [e.name]) &&
-        e.title && titleKey &&
-        (titleKey.includes(e.title) || e.title.includes(titleKey))
-      );
-      if (roleMatch) {
-        const label = roleMatch.title.charAt(0).toUpperCase() + roleMatch.title.slice(1);
-        return makeChip(APPLIED_CHIP_ID, "joblens-chip--applied-role", "Applied · This role", `Applied for: ${label}`);
-      }
-      return makeChip(APPLIED_CHIP_ID, "joblens-chip--co-applied", "Applied here",
-        "You applied to this company for a different role in the last 90 days");
-    }
-
-    return makeChip(APPLIED_CHIP_ID, "joblens-chip--applied", "Applied",
-      "You applied to this company in the last 90 days");
-  };
-
-  const renderChipRow = (titleEl, sponsorshipResult, compResult, expResult, applicantCount, classification, languages, appliedChip) => {
+  const renderChipRow = (titleEl, sponsorshipResult, compResult, expResult, applicantCount, classification, languages) => {
     const existing = document.getElementById(CHIP_ROW_ID);
     if (existing) existing.remove();
 
@@ -270,13 +273,20 @@
     row.appendChild(buildExperienceChip(expResult));
     buildLanguageChips(languages).forEach(chip => row.appendChild(chip));
     row.appendChild(buildSoftwareChip(classification));
-    if (appliedChip) row.appendChild(appliedChip);
 
-    titleEl.appendChild(row);
+    // Never nest the row inside the title <p> — a <div> in a <p> is invalid,
+    // and the paragraph's line clamping can clip it out of view entirely.
+    const anchor = getRowAnchor(titleEl);
+    if (anchor.parentElement) {
+      anchor.parentElement.insertBefore(row, anchor.nextSibling);
+    } else {
+      titleEl.appendChild(row);
+    }
   };
 
   let lastJobKey = null;
   let lastApplicantCount = null;
+  let lastTitleEl = null;
 
   const getCurrentJobKey = () => {
     const m = window.location.href.match(/currentJobId=(\d+)/) ||
@@ -284,11 +294,31 @@
     return m ? m[1] : null;
   };
 
+  // LinkedIn rewrites this DOM constantly, so every bail-out below is a thing
+  // that used to work and stopped. Say which one it was instead of returning
+  // silently — a missing chip row is otherwise indistinguishable from a
+  // classifier that decided not to render.
+  const LOG = "[JobLens]";
+
   const runClassifier = async () => {
+    try {
+      await renderChips();
+    } catch (err) {
+      console.error(`${LOG} render failed:`, err);
+    }
+  };
+
+  // Bumped on every entry to renderChips. A run that was waiting on the title or
+  // description when the user moved to the next job must not write its (now
+  // stale) chips over the newer run's — it checks the generation after each await.
+  let runGeneration = 0;
+
+  const renderChips = async () => {
+    const myGen = ++runGeneration;
     const jobKey = getCurrentJobKey();
     if (jobKey && jobKey === lastJobKey && document.getElementById(CHIP_ROW_ID)) {
       // Same job, chips already rendered — only re-run if applicant count has improved
-      const freshCount = getApplicantCount();
+      const freshCount = getApplicantCount(lastTitleEl);
       if (freshCount === lastApplicantCount) return;
       // Premium section loaded with a better number — fall through to re-render
     }
@@ -303,6 +333,19 @@
           '[data-sdui-screen*="SemanticJobDetails"] a[href*="/jobs/view/"]'
         );
         return link ? link.closest("p") : null;
+      },
+      () => {
+        // New SDUI layout, no data-sdui-screen wrapper. The title is the <p>
+        // wrapping the link to this job's own /jobs/view/<id>; matching on the
+        // id from the URL keeps a left-panel card link from winning.
+        const jobId = getCurrentJobKey();
+        if (!jobId) return null;
+        const pane = getDetailPaneRoot();
+        for (const a of (pane || document).querySelectorAll(`a[href*="/jobs/view/${jobId}"]`)) {
+          const p = a.closest("p");
+          if (p) return p;
+        }
+        return null;
       },
       () => {
         // Direct job view (new SDUI layout, no data-sdui-screen wrapper).
@@ -321,8 +364,12 @@
                  !text.includes('·') && !text.includes('$') && !text.includes('@');
         };
 
-        const descEl = document.querySelector('[data-testid="expandable-text-box"]');
-        const allP = Array.from(document.querySelectorAll('p'));
+        const descEl = getDescriptionEl();
+        // Scoped to the detail pane: a document-wide scan picks up the left
+        // results panel, whose cards carry their own meta lines ("Viewed ·
+        // 3 days ago") and win the findIndex below.
+        const scope = getDetailPaneRoot() || document;
+        const allP = Array.from(scope.querySelectorAll('p'));
         const descP = descEl ? descEl.closest('p') : null;
         const descIdx = descP ? allP.indexOf(descP) : allP.length;
         const head = allP.slice(0, descIdx);
@@ -347,35 +394,104 @@
       }
     ]);
 
-    if (!titleEl || !window.JobLensClassifier) return;
+    if (myGen !== runGeneration) return; // superseded while waiting for the title
+    if (!titleEl) {
+      console.warn(`${LOG} no title element matched — chips not rendered`);
+      return;
+    }
+    if (!window.JobLensClassifier) {
+      console.warn(`${LOG} classifier.js did not load (window.JobLensClassifier missing)`);
+      return;
+    }
 
-    const descriptionText = getJobDescriptionText();
-    if (!descriptionText) return;
+    // The title lands before the description in the new layout, so on a fast
+    // job switch we get here with an empty description. Poll for it rather than
+    // bailing out and waiting on the next mutation — that costs a whole
+    // debounce window for what is usually one more animation frame.
+    let descriptionText = getJobDescriptionText();
+    if (!descriptionText) {
+      await waitForElement([() => getDescriptionEl()], 5000);
+      if (myGen !== runGeneration) return;
+      descriptionText = getJobDescriptionText();
+    }
+    if (!descriptionText) {
+      console.warn(`${LOG} job description not found — chips not rendered`);
+      return;
+    }
 
     const classification = window.JobLensClassifier.classifyJobText({ title: titleEl.innerText.trim(), jd: descriptionText });
     const expResult = window.JobLensClassifier.extractExperienceRequirement(descriptionText);
     const compResult = window.JobLensClassifier.extractCompensation(descriptionText);
     const sponsorshipResult = window.JobLensClassifier.analyzeSponsorship(descriptionText);
     const languages = window.JobLensClassifier.extractLanguages(descriptionText, titleEl.innerText.trim());
-    const applicantCount = getApplicantCount();
-
-    const companyName = getCompanyName(titleEl);
-    const appliedChip = await buildAppliedChip(companyName, titleEl.innerText.trim());
+    const applicantCount = getApplicantCount(titleEl);
 
     lastJobKey = getCurrentJobKey();
     lastApplicantCount = applicantCount;
-    renderChipRow(titleEl, sponsorshipResult, compResult, expResult, applicantCount, classification, languages, appliedChip);
-    Highlighter.highlight(sponsorshipResult, descriptionText);
+    lastTitleEl = titleEl;
+    renderChipRow(titleEl, sponsorshipResult, compResult, expResult, applicantCount, classification, languages);
+    Highlighter.highlight(sponsorshipResult);
     Highlighter.highlightExperience(expResult?.rawMatch);
     Highlighter.highlightCompensation(compResult?.rawMatch);
     Highlighter.highlightLanguages(languages);
   };
 
+  // Chips and highlight spans are DOM writes of our own; reacting to them
+  // scheduled another pass, which wrote again.
+  const isOwnNode = (node) => {
+    if (node.nodeType !== 1) return false;
+    const cls = node.getAttribute && node.getAttribute("class");
+    return typeof cls === "string" && (cls.includes("joblens-") || cls.includes("h1b-"));
+  };
+
+  const isRelevant = (mutations) => {
+    for (const m of mutations) {
+      for (const n of m.addedNodes) if (!isOwnNode(n)) return true;
+      for (const n of m.removedNodes) if (!isOwnNode(n)) return true;
+    }
+    return false;
+  };
+
+  // LinkedIn mutates the DOM continuously while a job loads, so a pure trailing
+  // debounce kept getting pushed out and the chips arrived late. Three changes:
+  // fire immediately when the job id changes (the classifier's own waits handle
+  // a DOM that isn't ready yet), shorten the trailing wait, and cap it with a
+  // max-wait so a steady mutation stream can't starve the render indefinitely.
+  const DEBOUNCE_MS = 150;
+  const MAX_WAIT_MS = 600;
+
   const observePage = () => {
-    let debounceTimer;
-    const observer = new MutationObserver(() => {
+    let debounceTimer = null;
+    let maxWaitTimer = null;
+    let seenJobKey = getCurrentJobKey();
+
+    const fire = () => {
       clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(runClassifier, 400);
+      clearTimeout(maxWaitTimer);
+      debounceTimer = maxWaitTimer = null;
+      runClassifier();
+    };
+
+    const schedule = () => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(fire, DEBOUNCE_MS);
+      if (!maxWaitTimer) maxWaitTimer = setTimeout(fire, MAX_WAIT_MS);
+    };
+
+    const observer = new MutationObserver((mutations) => {
+      if (!isRelevant(mutations)) return;
+
+      const jobKey = getCurrentJobKey();
+      if (jobKey && jobKey !== seenJobKey) {
+        seenJobKey = jobKey;
+        // Drop the previous job's chips right away — they are wrong now, and
+        // leaving them up reads as "stale" rather than "loading".
+        const stale = document.getElementById(CHIP_ROW_ID);
+        if (stale) stale.remove();
+        fire();
+        return;
+      }
+      schedule();
     });
     observer.observe(document.body, { childList: true, subtree: true });
   };

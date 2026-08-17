@@ -4,6 +4,19 @@ const Highlighter = (function () {
   const HIGHLIGHT_CLASS = 'h1b-sponsor-highlight';
   const HIGHLIGHT_POSITIVE_CLASS = 'h1b-sponsor-highlight-positive';
 
+  // Every class we inject. removeHighlights() only knew about the two sponsorship
+  // classes, so experience/compensation/language spans survived each re-render and
+  // got re-wrapped on the next pass — producing nested
+  // <span class="joblens-compensation-highlight"><span class="…">$150K</span></span>
+  // that grew one level deeper every time the observer fired.
+  const ALL_HIGHLIGHT_CLASSES = [
+    HIGHLIGHT_CLASS,
+    HIGHLIGHT_POSITIVE_CLASS,
+    'h1b-experience-highlight',
+    'joblens-compensation-highlight',
+    'joblens-language-highlight'
+  ];
+
   const DESCRIPTION_SELECTORS = [
     '[data-testid="expandable-text-box"]',
     '.jobs-description-content__text',
@@ -44,10 +57,8 @@ const Highlighter = (function () {
 
       let textNode;
       while ((textNode = walker.nextNode())) {
-        if (textNode.parentElement && (
-          textNode.parentElement.classList.contains(HIGHLIGHT_CLASS) ||
-          textNode.parentElement.classList.contains(HIGHLIGHT_POSITIVE_CLASS)
-        )) {
+        if (textNode.parentElement &&
+            ALL_HIGHLIGHT_CLASSES.some(c => textNode.parentElement.classList.contains(c))) {
           continue;
         }
 
@@ -95,22 +106,45 @@ const Highlighter = (function () {
     });
 
     for (const phrase of uniquePhrases) {
+      // Stop at the first container that matched. The selector list is ordered
+      // most- to least-specific and the containers nest, so continuing past a hit
+      // re-highlighted the same phrase once per remaining selector.
+      let highlighted = false;
       for (const selector of DESCRIPTION_SELECTORS) {
         try {
           const elements = document.querySelectorAll(selector);
           for (const el of elements) {
-            if (highlightPhraseInElement(el, phrase, cssClass)) break;
+            if (highlightPhraseInElement(el, phrase, cssClass)) { highlighted = true; break; }
           }
         } catch (e) {
           continue;
         }
+        if (highlighted) break;
       }
     }
   }
 
+  // The four highlight entry points each used to schedule their own 300ms pass.
+  // Queue them into a single flush so a re-render costs one DOM walk, not four.
+  let _pending = [];
+  let _flushTimer = null;
+
+  function scheduleHighlight(phrases, cssClass) {
+    if (!phrases || phrases.length === 0) return;
+    _pending.push({ phrases, cssClass });
+    clearTimeout(_flushTimer);
+    _flushTimer = setTimeout(() => {
+      const batch = _pending;
+      _pending = [];
+      _flushTimer = null;
+      for (const item of batch) highlightSentences(item.phrases, item.cssClass);
+    }, 300);
+  }
+
   function removeHighlights() {
     try {
-      document.querySelectorAll(`.${HIGHLIGHT_CLASS}, .${HIGHLIGHT_POSITIVE_CLASS}`).forEach(el => {
+      const selector = ALL_HIGHLIGHT_CLASSES.map(c => `.${c}`).join(', ');
+      document.querySelectorAll(selector).forEach(el => {
         const parent = el.parentNode;
         if (parent) {
           parent.replaceChild(document.createTextNode(el.textContent), el);
@@ -120,7 +154,9 @@ const Highlighter = (function () {
     } catch (e) {}
   }
 
-  function highlight(analysisResult, jobDescriptionText) {
+  function highlight(analysisResult) {
+    // Runs first in the render pass, so this clears every class before the
+    // experience/compensation/language passes are queued behind it.
     removeHighlights();
 
     if (analysisResult.status !== 'no' && analysisResult.status !== 'yes') return;
@@ -140,26 +176,23 @@ const Highlighter = (function () {
       cssClass = HIGHLIGHT_POSITIVE_CLASS;
     }
 
-    if (matchedPhrases.length > 0) {
-      setTimeout(() => highlightSentences(matchedPhrases, cssClass), 300);
-    }
+    scheduleHighlight(matchedPhrases, cssClass);
   }
 
   function highlightExperience(rawMatch) {
     if (!rawMatch) return;
-    setTimeout(() => highlightSentences([rawMatch], 'h1b-experience-highlight'), 300);
+    scheduleHighlight([rawMatch], 'h1b-experience-highlight');
   }
 
   function highlightCompensation(rawMatch) {
     if (!rawMatch) return;
-    setTimeout(() => highlightSentences([rawMatch], 'joblens-compensation-highlight'), 300);
+    scheduleHighlight([rawMatch], 'joblens-compensation-highlight');
   }
 
   function highlightLanguages(languages) {
     if (!languages || languages.length === 0) return;
     const keywords = languages.flatMap(lang => lang.matchedKeywords || []);
-    if (keywords.length === 0) return;
-    setTimeout(() => highlightSentences(keywords, 'joblens-language-highlight'), 300);
+    scheduleHighlight(keywords, 'joblens-language-highlight');
   }
 
   return { highlight, highlightExperience, highlightCompensation, highlightLanguages, removeHighlights };
